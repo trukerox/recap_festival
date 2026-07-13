@@ -1,0 +1,91 @@
+# =============================================================================
+# festival_recap — Docker Compose (Raspberry Pi homeserver)
+# Deploy to: ~/docker/festival_recap/docker-compose.yml  (user: gatekeeper)
+#
+# Independent service — NOTHING shared with Evestival. Reuses the shared Pi
+# `mariadb` container (own database `festival_recap`, own user) over the
+# external `web` network, and is reverse-proxied by caddy-prod at
+# https://festival_recap.homeserver.fritz.box
+#
+# The API server and the render worker run in the SAME process (see
+# src/server.js) — the worker is a DB-polling loop, not a separate queue
+# service. No Redis/BullMQ: FFmpeg rendering is CPU-bound on a single Pi, so a
+# distributed queue buys nothing and this keeps the ops footprint lean (same
+# pattern as job_search, which also skips Redis).
+#
+# SECRETS (Docker secret file mounts → read by src/utils/secrets.js):
+#   db_password  → MariaDB `festival_recap` user password
+#   jwt_secret   → session/download-link signing key (openssl rand -hex 32)
+#
+# FIRST RUN:
+#   1) Create DB + user in MariaDB (see scripts/sql/000_create_db_user.sql)
+#   2) Drop secret files in ./secrets/*.txt (mode 600)
+#   3) Add royalty-free tracks under ./music (see music/README.md)
+#   4) docker compose up -d --build
+#   5) docker compose exec festival_recap node src/db/migrate.js
+# =============================================================================
+
+services:
+  festival_recap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: festival_recap:latest
+    container_name: festival_recap
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DB_HOST: mariadb
+      DB_NAME: festival_recap
+      DB_USER: festival_recap
+    secrets:
+      - db_password
+      - jwt_secret
+    volumes:
+      # Uploads + rendered output + scratch render workspace. Persist across
+      # rebuilds; uploads/renders should be included in backups, tmp can be
+      # excluded (regenerated per job).
+      - /mnt/storage/festival_recap/data:/app/data
+    networks:
+      - web
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          # FFmpeg encoding is CPU-bound — this needs real headroom, unlike a
+          # typical lightweight web service on this Pi. Tune `cpus` down if
+          # the Pi has fewer cores or other services are starved; a Pi 4/5
+          # quad-core box leaves 1 core free for Caddy/MariaDB/etc. at "3.0".
+          cpus: "3.0"
+          memory: 1536M
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+
+# `web` is created by the Caddy/MariaDB stack; it is shared and external here.
+networks:
+  web:
+    external: true

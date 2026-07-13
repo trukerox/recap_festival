@@ -1,0 +1,12 @@
+[
+  {
+    "title": "REPLACE_ME — track title",
+    "artist": "REPLACE_ME — artist/uploader name",
+    "genre": "festival",
+    "bpm": 128,
+    "duration_seconds": 30,
+    "file_path": "music/replace_me.mp3",
+    "license": "REPLACE_ME — e.g. Pixabay Content License / CC0",
+    "source_url": "REPLACE_ME — where you downloaded it from"
+  }
+]

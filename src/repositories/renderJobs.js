@@ -1,0 +1,62 @@
+import { query, queryOne } from "../db/pool.js";
+
+export async function createJob({ projectId, musicTrackId }) {
+  const result = await query(
+    "INSERT INTO render_jobs (project_id, music_track_id, status) VALUES (?, ?, 'queued')",
+    [projectId, musicTrackId ?? null],
+  );
+  return getJob(result.insertId);
+}
+
+export async function getJob(id) {
+  return queryOne("SELECT * FROM render_jobs WHERE id = ?", [id]);
+}
+
+// Atomically claims the oldest queued job so a single worker never double-picks
+// (defensive — RENDER_CONCURRENCY is 1 by default, but this is cheap insurance
+// if it's ever raised or a second worker process is started).
+export async function claimNextQueuedJob() {
+  const candidate = await queryOne(
+    "SELECT id FROM render_jobs WHERE status = 'queued' ORDER BY queued_at ASC LIMIT 1",
+  );
+  if (!candidate) return null;
+
+  const result = await query(
+    "UPDATE render_jobs SET status = 'analyzing', started_at = NOW() WHERE id = ? AND status = 'queued'",
+    [candidate.id],
+  );
+  if (result.affectedRows === 0) return null; // lost the race to another worker
+  return getJob(candidate.id);
+}
+
+export async function updateStatus(id, status, extra = {}) {
+  const fields = ["status = ?"];
+  const params = [status];
+  for (const [col, val] of Object.entries(extra)) {
+    fields.push(`${col} = ?`);
+    params.push(val);
+  }
+  params.push(id);
+  await query(`UPDATE render_jobs SET ${fields.join(", ")} WHERE id = ?`, params);
+  return getJob(id);
+}
+
+export async function markProgress(id, percent) {
+  await query("UPDATE render_jobs SET progress_percent = ? WHERE id = ?", [percent, id]);
+}
+
+export async function markDone(id, outputPath) {
+  await query(
+    "UPDATE render_jobs SET status = 'done', progress_percent = 100, output_path = ?, finished_at = NOW() WHERE id = ?",
+    [outputPath, id],
+  );
+  return getJob(id);
+}
+
+export async function markFailed(id, errorMessage) {
+  await query(
+    "UPDATE render_jobs SET status = 'failed', error_message = ?, finished_at = NOW() WHERE id = ?",
+    [String(errorMessage).slice(0, 2000), id],
+  );
+  return getJob(id);
+}
