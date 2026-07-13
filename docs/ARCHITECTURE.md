@@ -25,7 +25,7 @@ flowchart LR
 
   DB[(MariaDB<br/>shared Pi container<br/>db: festival_recap)]
   Disk[(/mnt/storage/festival_recap/data<br/>uploads, renders, tmp)]
-  Music[(music/ local library<br/>curated royalty-free tracks)]
+  Music[(/mnt/storage/festival_recap/music<br/>curated royalty-free tracks)]
 
   UI -- multipart upload --> API
   UI -- poll status / download --> API
@@ -284,8 +284,8 @@ festival_recap/
 │   ├── face_count.py           # OpenCV Haar cascade face/crowd heuristic
 │   ├── seed-music.js           # loads music/library.json into music_tracks
 │   └── cleanup.js              # retention cleanup (RETENTION_DAYS)
-├── music/
-│   ├── library.json            # curated track metadata (bpm, genre, license)
+├── music/                       # BOOTSTRAP TEMPLATE ONLY — not read at runtime.
+│   ├── library.json             # copied to /mnt/storage/festival_recap/music once by setup-pi.sh
 │   └── README.md                # how to source/add royalty-free tracks
 ├── public/index.html           # minimal upload/status/preview frontend
 └── src/
@@ -327,10 +327,11 @@ critical path.
 
 ### Local Docker deployment (primary target)
 
-1. `deploy/setup-pi.sh` on the Pi (clone, secrets, `/mnt/storage` data dir).
+1. `deploy/setup-pi.sh` on the Pi (clone, secrets, `/mnt/storage` data + music dirs).
 2. Create the DB + user in the shared `mariadb` container
    ([scripts/sql/000_create_db_user.sql](../scripts/sql/000_create_db_user.sql)).
-3. Add tracks to `music/`, run `seed-music.js`.
+3. Add tracks via the Music tab, or edit `/mnt/storage/festival_recap/music/library.json`
+   directly and run `seed-music.js`.
 4. Append the Caddy block, reload Caddy.
 5. `docker compose up -d --build`.
 

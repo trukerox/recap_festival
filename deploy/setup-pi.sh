@@ -36,6 +36,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 REPO_DIR="${FESTIVAL_RECAP_DIR:-$HOME/docker/festival_recap}"
 if $LOCAL_MODE; then REPO_DIR="$REPO_ROOT"; fi
 DATA_DIR="/mnt/storage/festival_recap/data"
+MUSIC_DIR="/mnt/storage/festival_recap/music"
 CONTAINER_UID=1000   # the `node` user inside the container (see docker/Dockerfile)
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -109,6 +110,28 @@ else
   ok "Created and chowned to uid $CONTAINER_UID (container user)"
 fi
 
+# ── 4b. Music directory ──────────────────────────────────────────────────────
+# Lives under /mnt/storage (same as the data dir above), NOT in the git
+# checkout — bind-mounted read-write in docker-compose.yml so the "Music" tab
+# can download tracks into it directly. Bootstrapped once from the repo's
+# music/library.json template; that template file is never touched again
+# after this — the live copy on the Pi is the one that grows over time.
+step "Music directory ($MUSIC_DIR)"
+if [[ -d "$MUSIC_DIR" ]]; then
+  ok "Already exists"
+else
+  sudo mkdir -p "$MUSIC_DIR"
+  sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" "$MUSIC_DIR"
+  ok "Created and chowned to uid $CONTAINER_UID (container user)"
+fi
+if [[ -s "$MUSIC_DIR/library.json" ]]; then
+  ok "library.json already present — left untouched"
+else
+  sudo cp "$REPO_DIR/music/library.json" "$MUSIC_DIR/library.json"
+  sudo chown "$CONTAINER_UID:$CONTAINER_UID" "$MUSIC_DIR/library.json"
+  ok "Bootstrapped library.json from the repo template"
+fi
+
 # ── 5. Next steps ────────────────────────────────────────────────────────────
 echo -e "\n${CYAN}${BOLD}════════════════════════════════════════════════${NC}"
 echo -e "  ${BOLD}Setup complete. Finish these manual steps:${NC}"
@@ -126,8 +149,12 @@ info "   GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,ALTER,INDEX,REFERENCES ON fest
 info "   FLUSH PRIVILEGES;\""
 info "(reference SQL: $REPO_DIR/scripts/sql/000_create_db_user.sql)"
 
-echo -e "\n${BOLD}3) Add royalty-free music${NC} (see music/README.md), then seed the DB:"
-info "docker compose exec -T festival_recap node scripts/seed-music.js"
+echo -e "\n${BOLD}3) Add royalty-free music${NC} — easiest is the web UI's Music tab (paste"
+info "a pixabay.com/music/... link, it downloads the track itself). For the"
+info "manual/bulk path instead, edit $MUSIC_DIR/library.json directly on the"
+info "Pi (NOT the repo's music/library.json — that's only the bootstrap"
+info "template), then: docker compose exec -T festival_recap node scripts/seed-music.js"
+info "(see music/README.md for both paths)"
 
 echo -e "\n${BOLD}4) Add the Caddy site block${NC} (you wire Caddy yourself):"
 info "Append the block in $REPO_DIR/caddy/festival_recap.caddy to your Pi Caddyfile,"

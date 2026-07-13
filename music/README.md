@@ -4,6 +4,13 @@ This service does **not** call a music API at render time — it picks from a
 small curated local library instead. That avoids adding an external
 dependency/rate-limit to the render path and keeps licensing unambiguous.
 
+**This `music/` folder in the git repo is only a bootstrap template.** The
+live music library the running service actually uses lives on the Pi at
+`/mnt/storage/festival_recap/music` (same place as `uploads`/`renders`), bind-mounted
+into the container — not in the git checkout. `deploy/setup-pi.sh` copies
+this folder's `library.json` there once, the first time it's run, to seed it;
+after that the two are independent and only the `/mnt/storage` copy matters.
+
 ## Adding tracks — via the Music tab (recommended)
 
 Open the **Music** tab in the web UI, paste a `pixabay.com/music/...` track
@@ -44,13 +51,14 @@ auto-import breaks.
 
 ## On the Pi
 
-Both paths write into the same place: `music/` is **bind-mounted, not baked
-into the image** (see `docker-compose.yml`) — the container always reads
-whatever is at `~/docker/festival_recap/music/` on the host, and the
-Music-tab import writes there directly since it runs inside the container.
-For the manual path, mp3s are gitignored — `git pull` will never bring them
-in, so FileZilla/scp them onto the Pi directly if you're not using the
-Music-tab import.
+Both paths write into the same place: `/mnt/storage/festival_recap/music` is
+**bind-mounted into the container, not baked into the image** (see
+`docker-compose.yml`) — the container always reads/writes whatever is at that
+path on the host. The Music-tab import writes there directly (it runs inside
+the container). For the manual path, edit
+`/mnt/storage/festival_recap/music/library.json` directly on the Pi (`nano`)
+and FileZilla/scp mp3s into that same folder — **not** into the repo
+checkout's `music/` folder, which is never read at runtime.
 
 ## Licensing
 

@@ -50,12 +50,13 @@ services:
       # rebuilds; uploads/renders should be included in backups, tmp can be
       # excluded (regenerated per job).
       - /mnt/storage/festival_recap/data:/app/data
-      # Bind-mounted (not baked into the image) so adding/removing tracks only
-      # needs a container restart + re-seed, not a rebuild. Lives in the repo
-      # checkout itself (~/docker/festival_recap/music), NOT /mnt/storage —
-      # library.json is git-tracked, the mp3s themselves are gitignored and
-      # must be copied onto the Pi directly (see music/README.md).
-      - ./music:/app/music:ro
+      # Music library — bind-mounted (not baked into the image) so
+      # adding/removing tracks only needs a re-seed, not a rebuild. Lives
+      # under /mnt/storage like the rest of this service's persistent data
+      # (NOT in the git checkout) — writable, since the "Music" tab's
+      # auto-import downloads mp3s straight into it. Bootstrapped from the
+      # repo's music/library.json template by deploy/setup-pi.sh.
+      - /mnt/storage/festival_recap/music:/app/music
     networks:
       - web
     healthcheck:

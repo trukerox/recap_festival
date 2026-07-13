@@ -17,6 +17,8 @@ database, own user, no cross-database access).
 - Host: 192.168.178.37, user: `gatekeeper`
 - Repo lands at: `~/docker/festival_recap`
 - Data at: `/mnt/storage/festival_recap/data` (uploads, renders, tmp)
+- Music at: `/mnt/storage/festival_recap/music` (library.json + mp3s — bind-mounted,
+  NOT the repo's own `music/` folder, which is only a one-time bootstrap template)
 - Joins the existing `web` external Docker network (shared with Caddy + MariaDB)
 - MariaDB container hostname: `mariadb` (shared Pi stack)
 
