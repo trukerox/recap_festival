@@ -4,7 +4,7 @@
 #
 # Independent service — NOTHING shared with Evestival. Reuses the shared Pi
 # `mariadb` container (own database `festival_recap`, own user) over the
-# external `web` network, and is reverse-proxied by caddy-prod at
+# external `web` network, and is reverse-proxied by the shared `caddy` container at
 # https://festival_recap.homeserver.fritz.box
 #
 # The API server and the render worker run in the SAME process (see
