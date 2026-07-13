@@ -4,7 +4,8 @@ Self-hosted service that turns uploaded festival photos/clips into an
 energetic 20-second vertical (1080x1920) recap video — for YouTube Shorts,
 Instagram Reels, TikTok. Runs standalone in Docker on the Raspberry Pi
 homeserver. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full
-design (schema, API, AI scoring approach, scaling strategy).
+design (schema, API, AI scoring approach, scaling strategy) and
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for how to ship new code.
 
 **Independent project** — nothing shared with Evestival or job_search beyond
 the Pi's shared `mariadb` container and `web` Docker network.
