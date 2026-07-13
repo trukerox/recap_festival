@@ -13,35 +13,35 @@ after that the two are independent and only the `/mnt/storage` copy matters.
 
 ## Adding tracks — via the Music tab (recommended)
 
-Open the **Music** tab in the web UI, paste a `pixabay.com/music/...` track
-URL, click **Preview**. The server scrapes the title/artist/duration/license
-from Pixabay's page metadata and shows an editable form — confirm/adjust the
-**genre** (not reliably scrapeable) and click **Download & add track**. With
-"Auto-detect BPM" checked (the default), the server downloads the mp3 and
-estimates the real tempo from the audio itself (ffmpeg lowpass filter +
-energy-envelope autocorrelation — see `src/services/bpmDetect.js`) instead of
-guessing from genre. No BPM is ever *scraped* from Pixabay or anywhere
-else — it isn't published anywhere — but this **is** a measurement of the
-actual downloaded track, not a guess, once auto-detect runs.
+Open the **Music** tab in the web UI and use the **"Add a track you
+downloaded"** form: download a royalty-free mp3 in your browser (e.g. from
+[Pixabay Music](https://pixabay.com/music/)), upload the file, fill in
+title/genre (and optionally artist/source URL/license), and submit. With
+"Auto-detect BPM" checked (the default), the server measures the real tempo
+from the audio itself (ffmpeg lowpass filter + energy-envelope
+autocorrelation — see `src/services/bpmDetect.js`) instead of guessing from
+genre.
 
-That said, simple autocorrelation-based detectors have one well-known,
-unavoidable failure mode: they can lock onto a harmonic and report half or
-double the true tempo (e.g. 70 vs 140). The import result shows a confidence
-percentage, and the library table's BPM column is click-to-edit if a value
-sounds wrong once you hear the render.
+**Why upload instead of paste-a-link?** Pixabay sits behind Cloudflare-style
+bot protection that returns **HTTP 403 to any server-side request** — verified
+with full browser headers from a residential IP, still blocked. Only a real
+browser (yours) gets through, so the file has to come from you. The "add from
+a link" form still exists (advanced section) for any future non-blocking
+source, but it does not work for Pixabay.
+
+Simple autocorrelation-based BPM detectors have one well-known, unavoidable
+failure mode: they can lock onto a harmonic and report half or double the true
+tempo (e.g. 70 vs 140). The result shows a confidence percentage, and the
+library table's BPM column is click-to-edit if a value sounds wrong once you
+hear the render.
 
 No FileZilla, no manual JSON editing needed for this path.
 
-Only `pixabay.com/music/...` links are understood right now (see
-`src/services/musicImport.js`). Anything else falls back to the manual path
-below. If Pixabay ever blocks the Pi's requests (bot protection, layout
-changes), you'll get a clear error from the Preview step and should also fall
-back to the manual path.
-
-Implementation: `src/services/musicImport.js` (scrape + download),
-`src/services/bpmDetect.js` (tempo estimation), `src/routes/music.js`
-(`GET /api/music/preview`, `POST /api/music/import`, `PATCH /api/music/:id`
-to correct bpm/genre afterwards).
+Implementation: `src/routes/music.js` (`POST /api/music/upload` for the
+reliable path; `GET /api/music/preview` + `POST /api/music/import` for the
+link path; `PATCH /api/music/:id` to correct bpm/genre afterwards),
+`src/services/bpmDetect.js` (tempo estimation), `src/services/musicImport.js`
+(Pixabay scrape + server-side download, for the link path).
 
 ## Adding tracks — manual / bulk path
 

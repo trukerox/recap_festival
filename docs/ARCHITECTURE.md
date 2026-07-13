@@ -159,7 +159,8 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
 | `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
 | `GET`  | `/api/music/preview?url=` | Scrape a `pixabay.com/music/...` URL's metadata (title/artist/duration/license) without downloading anything |
-| `POST` | `/api/music/import` | Re-scrape the URL server-side, download the mp3, auto-detect BPM from the audio (or use the supplied one), upsert the DB row — body: `{ url, genre, bpm? }` |
+| `POST` | `/api/music/upload` | **Primary add path.** Multipart upload of a downloaded mp3 (field `audio`) + `title`/`genre`/`artist?`/`license?`/`sourceUrl?`/`bpm?`; auto-detects BPM from the file, upserts the DB row |
+| `POST` | `/api/music/import` | URL auto-import — re-scrape + download + BPM-detect + upsert. **Blocked by Pixabay's bot protection (403); kept for non-blocking sources.** Body: `{ url, genre, bpm? }` |
 | `PATCH` | `/api/music/:id/active` | Toggle a track active/inactive — body: `{ active: bool }` |
 | `PATCH` | `/api/music/:id` | Correct a track's `bpm`/`genre` after the fact (e.g. auto-detection was off by an octave) |
 
@@ -236,12 +237,27 @@ Implemented in [src/services/selection.js](../src/services/selection.js):
 
 ### Music library & BPM detection ([src/services/musicImport.js](../src/services/musicImport.js), [src/services/bpmDetect.js](../src/services/bpmDetect.js))
 
-Adding a track (via the Music tab, `GET /api/music/preview` → `POST
-/api/music/import`) scrapes Pixabay's per-track schema.org `AudioObject`
-JSON-LD block for title/artist/duration/license and a direct CDN mp3 URL,
-downloads the file into `/mnt/storage/festival_recap/music`, then **auto-detects
-BPM from the actual downloaded audio** rather than asking for an external API
-or a manual measurement:
+**Two ways to add a track, both landing the mp3 in
+`/mnt/storage/festival_recap/music` and both auto-detecting BPM from the
+audio:**
+
+- **Upload (primary, reliable)** — `POST /api/music/upload`. You download the
+  mp3 in your browser and upload the file; the server probes duration and
+  detects BPM. This exists because the URL path below does not work for
+  Pixabay: **Pixabay sits behind Cloudflare-style bot protection that
+  fingerprints the TLS handshake and returns HTTP 403 to any server-side
+  request** — verified with full browser headers from a residential IP, still
+  403. Only a real browser (yours) gets through, so the file has to come from
+  you. Defeating this server-side would need a full headless Chromium on the
+  Pi — too heavy/fragile to justify.
+- **URL import (advanced, usually blocked)** — `GET /api/music/preview` →
+  `POST /api/music/import`. Scrapes Pixabay's per-track schema.org
+  `AudioObject` JSON-LD block (title/artist/duration/license + direct CDN mp3
+  URL) and downloads the file server-side. Kept for any future non-blocking
+  source, but 403s on Pixabay today.
+
+BPM auto-detection (shared by both paths) rather than an external API or a
+manual measurement:
 
 1. ffmpeg low-passes the track (`lowpass=f=150`) to isolate bass/kick energy
    — the clearest beat signal for the EDM/festival/dubstep genres this tool

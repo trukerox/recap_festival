@@ -45,18 +45,19 @@ database, own user, no cross-database access).
   (`src/queue/worker.js`), `RENDER_CONCURRENCY=1` by default
 - Music: local curated library at `/mnt/storage/festival_recap/music`
   (library.json + audio files), no external API call at render time. Adding
-  tracks: the "Music" tab lets you paste a `pixabay.com/music/...` URL —
-  server scrapes the page's JSON-LD `AudioObject` block
-  (title/artist/duration/direct mp3 URL), downloads the file, and upserts the
-  DB row (`src/services/musicImport.js`, `src/routes/music.js`
-  preview/import endpoints). BPM is never *published* anywhere (Pixabay or
-  otherwise), but IS auto-detected from the downloaded audio itself (ffmpeg
-  lowpass + energy-envelope autocorrelation, `src/services/bpmDetect.js`) —
-  a real measurement, not a guess, though simple autocorrelation can lock
-  onto a harmonic (report half/double the true tempo); always shown with a
-  confidence % and correctable via `PATCH /api/music/:id`. Only Pixabay URLs
-  are understood; other sources use the manual `library.json` +
-  `scripts/seed-music.js` path (see `music/README.md`).
+  tracks — PRIMARY path is the "Music" tab's file upload (`POST
+  /api/music/upload`): you download the mp3 in your browser, upload the file,
+  server auto-detects BPM + upserts. The paste-a-URL import (`preview` +
+  `import`, `src/services/musicImport.js`) is DEAD for Pixabay — Pixabay's
+  Cloudflare bot protection 403s every server-side fetch (confirmed 2026-07-13,
+  even full browser headers from a residential IP); kept only for hypothetical
+  non-blocking sources. BPM is never *published* anywhere, but IS auto-detected
+  from the audio itself (ffmpeg lowpass + energy-envelope autocorrelation,
+  `src/services/bpmDetect.js`) — a real measurement, though simple
+  autocorrelation can lock onto a harmonic (report half/double the true tempo);
+  shown with a confidence % and correctable via `PATCH /api/music/:id`. Bulk/
+  offline alternative: manual `library.json` + `scripts/seed-music.js` (see
+  `music/README.md`).
 
 ## File conventions
 - DB migrations: `src/db/migrations/NNN_description.sql`
@@ -71,12 +72,11 @@ database, own user, no cross-database access).
 - Scoring weights in `src/services/mediaAnalysis.js` are initial estimates,
   not tuned against real festival photos/clips
 - `music/library.json` ships with a placeholder entry only — use the Music
-  tab (Pixabay URL import) or the manual path to add real tracks before this
-  can render anything
-- Pixabay scraping (`src/services/musicImport.js`) is untested from the Pi's
-  actual network — Pixabay may apply bot protection that blocks server-side
-  requests even with browser-like headers; if `GET /api/music/preview`
-  errors out, fall back to the manual `library.json` path
+  tab's upload form or the manual path to add real tracks before this can
+  render anything
+- Pixabay URL import is confirmed blocked (403, Cloudflare bot protection) —
+  use the file-upload path instead; the URL endpoints remain only for a
+  hypothetical future non-blocking source
 - BPM auto-detection (`src/services/bpmDetect.js`) is untested against real
   downloaded tracks — verify the first few imports sound right at the
   reported BPM before trusting it unattended; correct via `PATCH /api/music/:id`

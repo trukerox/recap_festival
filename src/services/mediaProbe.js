@@ -25,3 +25,12 @@ export function probeVideo(path) {
 export async function probeMedia(path, kind) {
   return kind === "video" ? probeVideo(path) : probeImage(path);
 }
+
+export function probeAudioDuration(path) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(path, (err, data) => {
+      if (err) return reject(err);
+      resolve(data.format?.duration ? Number(data.format.duration) : null);
+    });
+  });
+}
