@@ -20,7 +20,15 @@ async function analyzeProjectMedia(projectId) {
   const items = await listByProject(projectId);
   for (const item of items) {
     const existing = await getScore(item.id);
-    if (!existing) await analyzeMediaItem(item);
+    if (existing) continue;
+    try {
+      await analyzeMediaItem(item);
+    } catch (err) {
+      // Don't let one unreadable/odd file fail the whole render — it just
+      // won't get a score row, so it's excluded from selection. buildTimeline
+      // will still fail loudly if too few items survive (<3).
+      logger.warn({ err, mediaItemId: item.id, path: item.stored_path }, "media analysis failed; skipping item");
+    }
   }
 }
 

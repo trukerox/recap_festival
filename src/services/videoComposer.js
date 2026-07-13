@@ -136,8 +136,11 @@ export async function composeVideo({
 
   try {
     await new Promise((resolve, reject) => {
+      // NB: don't pass the output map as complexFilter's 2nd arg AND also add
+      // -map below — that double-maps and ffmpeg errors. We map explicitly via
+      // outputOptions, so complexFilter takes only the graph string.
       command
-        .complexFilter(filterGraph, [videoOutLabel, "aout"])
+        .complexFilter(filterGraph)
         .outputOptions([
           "-map", `[${videoOutLabel}]`,
           "-map", "[aout]",
