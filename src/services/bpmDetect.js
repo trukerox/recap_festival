@@ -100,3 +100,11 @@ export async function detectBpm(filePath) {
   const envelope = energyEnvelope(samples, SAMPLE_RATE, WINDOW_MS);
   return autocorrelateBpm(envelope, WINDOW_MS, MIN_BPM, MAX_BPM);
 }
+
+// Rough genre-typical tempo, NOT a measurement — used only as the fallback
+// when detectBpm() can't produce a value (e.g. a track too short to analyse).
+// Always presented as editable, never as fact.
+const GENRE_DEFAULT_BPM = { edm: 128, electronic: 124, festival: 126, pop: 110, cinematic: 90 };
+export function genreDefaultBpm(genre) {
+  return GENRE_DEFAULT_BPM[genre] ?? 126;
+}

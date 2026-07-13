@@ -109,43 +109,26 @@
     </fieldset>
 
     <fieldset>
-      <legend>Advanced: add from a link (often blocked)</legend>
-      <p class="muted">Paste a Pixabay music track URL. The server tries to
-        scrape metadata and download the mp3 itself — but Pixabay actively
-        blocks server-side requests (HTTP 403), so this usually fails. Use the
-        upload form above instead. Kept here in case a non-blocking source is
-        ever used.</p>
-      <label>Track URL<input id="musicUrl" placeholder="https://pixabay.com/music/..."></label>
-      <button id="previewBtn">Preview</button>
-      <div id="musicPreviewError" class="error"></div>
-
-      <div id="musicPreview" class="hidden">
-        <p><strong id="pvTitle"></strong> by <span id="pvArtist"></span> — <span id="pvDuration"></span>s</p>
-        <p class="muted" id="pvLicense"></p>
-        <label>Genre
-          <select id="pvGenre">
-            <option value="electronic">Electronic</option>
-            <option value="edm">EDM</option>
-            <option value="festival">Festival</option>
-            <option value="pop">Pop</option>
-            <option value="cinematic">Cinematic</option>
-          </select>
-        </label>
-        <label style="display:flex; align-items:center; gap:0.4rem;">
-          <input type="checkbox" id="pvAutoDetect" checked style="width:auto;">
-          Auto-detect BPM from the audio after download (recommended)
-        </label>
-        <label>BPM
-          <input id="pvBpm" type="number" min="40" max="240" disabled>
-        </label>
-        <p class="muted">Auto-detection analyzes the actual track (ffmpeg +
-          energy autocorrelation) once it's downloaded — more accurate than a
-          genre guess, but simple detectors like this can occasionally read
-          half/double the true tempo. Always check it sounds right; the
-          library table below lets you click a BPM to correct it.</p>
-        <button id="importBtn">Download &amp; add track</button>
-      </div>
-      <div id="importStatus"></div>
+      <legend>Add from a Pixabay link (via extension)</legend>
+      <p class="muted">Paste a Pixabay music track URL and click Download. The
+        browser extension opens it in a background tab, downloads the mp3
+        (passing Pixabay's bot check that blocks the server), and adds it here
+        with auto-detected BPM — no manual download. Requires the
+        <em>festival_recap track grabber</em> extension installed and permitted
+        (see the <code>extension/</code> folder).</p>
+      <label>Track URL<input id="grabUrl" placeholder="https://pixabay.com/music/..."></label>
+      <label>Genre
+        <select id="grabGenre">
+          <option value="auto">Auto (guess from title)</option>
+          <option value="festival">Festival</option>
+          <option value="edm">EDM</option>
+          <option value="electronic">Electronic</option>
+          <option value="pop">Pop</option>
+          <option value="cinematic">Cinematic</option>
+        </select>
+      </label>
+      <button id="grabBtn">Download via extension</button>
+      <div id="grabStatus"></div>
     </fieldset>
 
     <fieldset>
@@ -296,64 +279,55 @@ $('uploadTrackBtn').addEventListener('click', async () => {
   loadMusicLibrary();
 });
 
-// ---- Music tab: link import (advanced) ----
-let previewMeta = null;
+// ---- Music tab: grab-from-link via the browser extension ----
+// The app can't talk to the extension directly (isolated worlds), so we
+// window.postMessage() a request; the extension's content script (injected on
+// this domain) forwards it to the extension, opens the Pixabay page in the
+// background, downloads the mp3, uploads it, and posts the result back here.
+let extensionReady = false;
+let grabTimeout = null;
 
-$('previewBtn').addEventListener('click', async () => {
-  const url = $('musicUrl').value.trim();
-  $('musicPreviewError').textContent = '';
-  $('musicPreview').classList.add('hidden');
-  if (!url) return;
-
-  const res = await fetch(`/api/music/preview?url=${encodeURIComponent(url)}`);
-  if (!res.ok) {
-    $('musicPreviewError').textContent = await res.text();
-    return;
-  }
-  previewMeta = await res.json();
-  $('pvTitle').textContent = previewMeta.title;
-  $('pvArtist').textContent = previewMeta.artist || 'unknown';
-  $('pvDuration').textContent = previewMeta.durationSeconds ?? '?';
-  $('pvLicense').textContent = `${previewMeta.license} — ${previewMeta.sourceUrl}`;
-  $('pvGenre').value = previewMeta.suggestedGenre;
-  $('pvBpm').value = previewMeta.suggestedBpm;
-  $('pvAutoDetect').checked = true;
-  $('pvBpm').disabled = true;
-  $('musicPreview').classList.remove('hidden');
+window.addEventListener('message', (event) => {
+  if (event.source !== window) return;
+  const d = event.data;
+  if (!d || d.source !== 'festivalrecap-ext') return;
+  if (d.type === 'ready') { extensionReady = true; return; }
+  if (d.type === 'grab-result') handleGrabResult(d.result);
 });
 
-$('pvAutoDetect').addEventListener('change', () => {
-  $('pvBpm').disabled = $('pvAutoDetect').checked;
-});
-
-$('importBtn').addEventListener('click', async () => {
-  $('importBtn').disabled = true;
-  $('importStatus').textContent = $('pvAutoDetect').checked
-    ? 'Downloading and analyzing tempo…'
-    : 'Downloading and saving…';
-  const autoDetect = $('pvAutoDetect').checked;
-  const res = await fetch('/api/music/import', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      url: $('musicUrl').value.trim(),
-      genre: $('pvGenre').value,
-      ...(autoDetect ? {} : { bpm: Number($('pvBpm').value) }),
-    }),
-  });
-  $('importBtn').disabled = false;
-  if (!res.ok) {
-    $('importStatus').innerHTML = `<span class="error">${await res.text()}</span>`;
+$('grabBtn').addEventListener('click', () => {
+  const url = $('grabUrl').value.trim();
+  if (!/^https:\/\/pixabay\.com\/music\//.test(url)) {
+    $('grabStatus').innerHTML = '<span class="error">Enter a pixabay.com/music/… track URL.</span>';
     return;
   }
-  const track = await res.json();
-  const conf = track.bpmConfidence != null ? ` (confidence ${Math.round(track.bpmConfidence * 100)}%)` : '';
-  const sourceLabel = { detected: 'auto-detected', manual: 'manual', 'genre-default': 'genre default (detection failed)' }[track.bpmSource] || '';
-  $('importStatus').textContent = `Track added: ${track.bpm} BPM${conf ? ' — ' + sourceLabel + conf : ''}. Click its BPM in the table below to correct it if it sounds wrong.`;
-  $('musicPreview').classList.add('hidden');
-  $('musicUrl').value = '';
+  if (!extensionReady) {
+    $('grabStatus').innerHTML = '<span class="error">Extension not detected. Install the festival_recap track grabber, click its toolbar icon once and choose Allow, then reload this page.</span>';
+    return;
+  }
+  $('grabBtn').disabled = true;
+  $('grabStatus').textContent = 'Asking the extension to grab it (opens Pixabay in the background)…';
+  const genre = $('grabGenre').value === 'auto' ? undefined : $('grabGenre').value;
+  window.postMessage({ source: 'festivalrecap-app', type: 'grab', url, genre }, '*');
+  grabTimeout = setTimeout(() => {
+    $('grabBtn').disabled = false;
+    $('grabStatus').innerHTML = '<span class="error">No response from the extension (timed out). Make sure it\'s permitted, then try again.</span>';
+  }, 90000);
+});
+
+function handleGrabResult(result) {
+  clearTimeout(grabTimeout);
+  $('grabBtn').disabled = false;
+  if (!result || !result.ok) {
+    $('grabStatus').innerHTML = `<span class="error">${result?.error || 'Grab failed'}</span>`;
+    return;
+  }
+  const t = result.track;
+  const conf = t.bpmConfidence != null ? ` (confidence ${Math.round(t.bpmConfidence * 100)}%)` : '';
+  $('grabStatus').textContent = `Added "${t.title}" — ${t.genre}, ${t.bpm} BPM${conf}. Click its BPM in the table to correct it if it sounds wrong.`;
+  $('grabUrl').value = '';
   loadMusicLibrary();
-});
+}
 
 $('refreshMusicBtn').addEventListener('click', loadMusicLibrary);
 

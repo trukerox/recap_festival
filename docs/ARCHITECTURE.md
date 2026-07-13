@@ -158,9 +158,7 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `GET`  | `/api/jobs/:id/download` | Streams the finished MP4 |
 | `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
 | `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
-| `GET`  | `/api/music/preview?url=` | Scrape a `pixabay.com/music/...` URL's metadata (title/artist/duration/license) without downloading anything |
-| `POST` | `/api/music/upload` | **Primary add path.** Multipart upload of a downloaded mp3 (field `audio`) + `title`/`genre`/`artist?`/`license?`/`sourceUrl?`/`bpm?`; auto-detects BPM from the file, upserts the DB row |
-| `POST` | `/api/music/import` | URL auto-import — re-scrape + download + BPM-detect + upsert. **Blocked by Pixabay's bot protection (403); kept for non-blocking sources.** Body: `{ url, genre, bpm? }` |
+| `POST` | `/api/music/upload` | **The only server-side add path.** Multipart upload of an mp3 (field `audio`) + `title`/`genre`/`artist?`/`license?`/`sourceUrl?`/`bpm?`; auto-detects BPM from the file, upserts the DB row. The audio always comes from a browser (upload form or extension) — the server never fetches the source site. |
 | `PATCH` | `/api/music/:id/active` | Toggle a track active/inactive — body: `{ active: bool }` |
 | `PATCH` | `/api/music/:id` | Correct a track's `bpm`/`genre` after the fact (e.g. auto-detection was off by an octave) |
 
@@ -235,36 +233,35 @@ Implemented in [src/services/selection.js](../src/services/selection.js):
   trimmed to the render length with a short fade in/out.
 - **Output**: `libx264` / `aac`, `-movflags +faststart`, 1080x1920 @ 30fps.
 
-### Music library & BPM detection ([src/services/musicImport.js](../src/services/musicImport.js), [src/services/bpmDetect.js](../src/services/bpmDetect.js))
+### Music library & BPM detection ([src/services/bpmDetect.js](../src/services/bpmDetect.js), [src/routes/music.js](../src/routes/music.js))
 
-**Three ways to add a track, all landing the mp3 in
-`/mnt/storage/festival_recap/music` and all auto-detecting BPM from the
-audio:**
+**Why the server never downloads tracks itself:** Pixabay sits behind
+Cloudflare-style bot protection that fingerprints the TLS handshake and
+returns HTTP 403 to *any* server-side request — verified with full browser
+headers from a residential IP, still 403. Only a real browser (the user's)
+gets through. So the audio always originates in the browser; the server only
+ever receives an already-downloaded file via `POST /api/music/upload`.
+(An earlier server-side scrape/download path — `/api/music/preview` +
+`/api/music/import`, `services/musicImport.js` — was removed once it was
+confirmed permanently blocked; the extension replaced it.)
 
-- **Browser extension (smoothest)** — `extension/` folder, a Firefox MV3
-  add-on modelled on the job_search JD-fetcher. On a Pixabay track page, one
-  click reads the page's `AudioObject` JSON-LD, fetches the mp3 **in the
-  browser** (which passes the bot check), and POSTs the file + metadata to
-  `POST /api/music/upload`. The server never touches Pixabay. No download,
-  no typing. See `extension/README.md`.
-- **Upload form (reliable, no extension)** — `POST /api/music/upload`. You
-  download the mp3 in your browser and upload the file via the Music tab; the
-  server probes duration and detects BPM. This exists because the URL path
-  below does not work for Pixabay: **Pixabay sits behind Cloudflare-style bot
-  protection that fingerprints the TLS handshake and returns HTTP 403 to any
-  server-side request** — verified with full browser headers from a
-  residential IP, still 403. Only a real browser (yours) gets through, so the
-  file has to come from you. Defeating this server-side would need a full
-  headless Chromium on the Pi — too heavy/fragile to justify.
-- **URL import (advanced, usually blocked)** — `GET /api/music/preview` →
-  `POST /api/music/import`. Scrapes Pixabay's per-track schema.org
-  `AudioObject` JSON-LD block (title/artist/duration/license + direct CDN mp3
-  URL) and downloads the file server-side. Kept for any future non-blocking
-  source, but 403s on Pixabay today.
+**Three ways to add a track, all ending at `POST /api/music/upload` and all
+auto-detecting BPM from the audio:**
 
-The extension and the upload form hit the **same** `POST /api/music/upload`
-endpoint — the extension just automates the download+fill step in the
-browser. The server is identical either way.
+- **Browser extension, in-app URL box (smoothest)** — paste a Pixabay track
+  URL in the Music tab's "Add from a Pixabay link" box and click *Download via
+  extension*. The page `window.postMessage`s the request to the extension's
+  content script (injected on the app domain, `extension/content-app.js`),
+  which forwards it to the background worker (`extension/background.js`). The
+  background **opens the Pixabay URL in a hidden tab** (a real page load in
+  your logged-in browser — passes the bot check), reads the `AudioObject`
+  JSON-LD, fetches the mp3, POSTs it to `/api/music/upload`, and closes the
+  tab. Result posts back to the page. No manual download, no typing.
+- **Browser extension, toolbar popup** — on a Pixabay track page, click the
+  extension icon → *Add current track*. Same as above but acts on the current
+  tab (`extension/popup.js`) instead of opening one.
+- **Upload form (no extension)** — download the mp3 in your browser yourself
+  and upload the file via the Music tab. Same endpoint, manual download.
 
 BPM auto-detection (shared by both paths) rather than an external API or a
 manual measurement:
@@ -348,9 +345,11 @@ festival_recap/
 │   ├── library.json             # copied to /mnt/storage/festival_recap/music once by setup-pi.sh
 │   └── README.md                # how to source/add royalty-free tracks
 ├── public/index.html           # minimal upload/status/preview frontend
-├── extension/                   # Firefox MV3 add-on: one-click Pixabay track grab
+├── extension/                   # Firefox MV3 add-on: Pixabay track grab → /api/music/upload
 │   ├── manifest.json            # host_permissions: pixabay, cdn.pixabay, festival_recap
-│   ├── popup.html / popup.js    # read page JSON-LD → fetch mp3 in-browser → POST /api/music/upload
+│   ├── popup.html / popup.js    # toolbar popup: grab the current Pixabay tab
+│   ├── content-app.js           # injected on the app domain: bridges the app's Download button
+│   ├── background.js            # opens a Pixabay URL in a hidden tab, grabs mp3, uploads
 │   └── README.md                # install + how it bypasses the server-side bot block
 └── src/
     ├── server.js                # Express app + starts the in-process worker loop
@@ -369,8 +368,7 @@ festival_recap/
     │   ├── mediaAnalysis.js      # orchestrates scoring → composite_score
     │   ├── selection.js          # builds the 20s timeline
     │   ├── videoComposer.js      # ffmpeg filter_complex graph + render
-    │   ├── musicImport.js        # Pixabay JSON-LD scrape + mp3 download ("Music" tab)
-    │   └── bpmDetect.js          # ffmpeg lowpass + autocorrelation BPM estimate
+    │   └── bpmDetect.js          # ffmpeg lowpass + autocorrelation BPM estimate + genre-default fallback
     ├── queue/worker.js           # DB-polling render worker
     └── utils/{secrets,logger,checksum,slugify}.js
 ```

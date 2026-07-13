@@ -13,21 +13,25 @@ after that the two are independent and only the `/mnt/storage` copy matters.
 
 ## Adding tracks — via the Music tab (recommended)
 
-Open the **Music** tab in the web UI and use the **"Add a track you
-downloaded"** form: download a royalty-free mp3 in your browser (e.g. from
-[Pixabay Music](https://pixabay.com/music/)), upload the file, fill in
-title/genre (and optionally artist/source URL/license), and submit. With
-"Auto-detect BPM" checked (the default), the server measures the real tempo
-from the audio itself (ffmpeg lowpass filter + energy-envelope
-autocorrelation — see `src/services/bpmDetect.js`) instead of guessing from
-genre.
+Two browser-based ways in the **Music** tab, both auto-detecting BPM:
 
-**Why upload instead of paste-a-link?** Pixabay sits behind Cloudflare-style
-bot protection that returns **HTTP 403 to any server-side request** — verified
-with full browser headers from a residential IP, still blocked. Only a real
-browser (yours) gets through, so the file has to come from you. The "add from
-a link" form still exists (advanced section) for any future non-blocking
-source, but it does not work for Pixabay.
+- **Add from a Pixabay link** — paste a `pixabay.com/music/…` URL and click
+  **Download via extension**. The browser extension (see `../extension/`)
+  opens the URL in a hidden tab, downloads the mp3, and uploads it. No manual
+  download. Requires the extension installed + permitted.
+- **Add a track you downloaded** — download a royalty-free mp3 in your browser
+  (e.g. from [Pixabay Music](https://pixabay.com/music/)), then upload the file
+  and fill in title/genre. Works without the extension.
+
+Either way, with "Auto-detect BPM" the server measures the real tempo from the
+audio itself (ffmpeg lowpass filter + energy-envelope autocorrelation — see
+`src/services/bpmDetect.js`) instead of guessing from genre.
+
+**Why is the audio always downloaded in the browser, never by the server?**
+Pixabay sits behind Cloudflare-style bot protection that returns **HTTP 403 to
+any server-side request** — verified with full browser headers from a
+residential IP, still blocked. Only a real browser (yours) gets through. The
+old server-side scrape/download path was removed once this was confirmed.
 
 Simple autocorrelation-based BPM detectors have one well-known, unavoidable
 failure mode: they can lock onto a harmonic and report half or double the true
@@ -35,13 +39,10 @@ tempo (e.g. 70 vs 140). The result shows a confidence percentage, and the
 library table's BPM column is click-to-edit if a value sounds wrong once you
 hear the render.
 
-No FileZilla, no manual JSON editing needed for this path.
-
-Implementation: `src/routes/music.js` (`POST /api/music/upload` for the
-reliable path; `GET /api/music/preview` + `POST /api/music/import` for the
-link path; `PATCH /api/music/:id` to correct bpm/genre afterwards),
-`src/services/bpmDetect.js` (tempo estimation), `src/services/musicImport.js`
-(Pixabay scrape + server-side download, for the link path).
+Implementation: `src/routes/music.js` (`POST /api/music/upload` — the single
+add endpoint; `PATCH /api/music/:id` to correct bpm/genre afterwards),
+`src/services/bpmDetect.js` (tempo estimation + genre-default fallback),
+`../extension/` (browser-side download that bypasses the bot block).
 
 ## Adding tracks — manual / bulk path
 

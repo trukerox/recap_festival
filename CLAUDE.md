@@ -45,16 +45,22 @@ database, own user, no cross-database access).
   (`src/queue/worker.js`), `RENDER_CONCURRENCY=1` by default
 - Music: local curated library at `/mnt/storage/festival_recap/music`
   (library.json + audio files), no external API call at render time. Adding
-  tracks, three ways, all ending in `POST /api/music/upload` + BPM auto-detect:
-  (1) **browser extension** (`extension/`, smoothest — Firefox MV3 modelled on
-  job_search's; reads the Pixabay page's JSON-LD, fetches the mp3 in-browser,
-  POSTs the file — one click, no download/typing); (2) **Music tab upload form**
-  (download mp3 yourself, upload the file); (3) manual `library.json` +
-  `scripts/seed-music.js` (bulk/offline). The paste-a-URL import (`preview` +
-  `import`, `src/services/musicImport.js`) is DEAD for Pixabay — Pixabay's
-  Cloudflare bot protection 403s every server-side fetch (confirmed 2026-07-13,
-  even full browser headers from a residential IP); the extension exists
-  precisely to route around this by fetching in your logged-in browser. BPM is
+  tracks, all ending in `POST /api/music/upload` + BPM auto-detect (the audio
+  ALWAYS comes from a browser; the server never fetches the source site):
+  (1) **extension + in-app URL box** (smoothest — paste a Pixabay URL in the
+  Music tab, click "Download via extension"; the app postMessages the extension
+  content script → background opens the URL in a hidden tab, grabs the mp3,
+  POSTs it); (2) **extension toolbar popup** (on a Pixabay page, click the
+  icon → grabs the current tab); (3) **Music tab upload form** (download mp3
+  yourself, upload); (4) manual `library.json` + `scripts/seed-music.js`
+  (bulk/offline). The old server-side scrape/download path
+  (`/api/music/preview` + `/import`, `services/musicImport.js`) was REMOVED —
+  Pixabay's Cloudflare bot protection 403s every server-side fetch (confirmed
+  2026-07-13, even full browser headers from a residential IP); the extension
+  replaced it by fetching in your logged-in browser. Extension files:
+  `extension/{manifest.json,popup.js,content-app.js,background.js}` (Firefox
+  MV3, modelled on job_search's; host_permissions are NOT auto-granted — the
+  popup requests them via `permissions.request()`). BPM is
   never *published* anywhere, but IS auto-detected from the audio itself (ffmpeg
   lowpass + energy-envelope autocorrelation, `src/services/bpmDetect.js`) — a
   real measurement, though simple autocorrelation can lock onto a harmonic
@@ -73,12 +79,12 @@ database, own user, no cross-database access).
   promising users a turnaround
 - Scoring weights in `src/services/mediaAnalysis.js` are initial estimates,
   not tuned against real festival photos/clips
-- `music/library.json` ships with a placeholder entry only — use the Music
-  tab's upload form or the manual path to add real tracks before this can
-  render anything
-- Pixabay URL import is confirmed blocked (403, Cloudflare bot protection) —
-  use the file-upload path instead; the URL endpoints remain only for a
-  hypothetical future non-blocking source
+- `music/library.json` ships with a placeholder entry only — use the extension
+  (in-app URL box or toolbar popup) or the upload form to add real tracks
+  before this can render anything
+- Server-side Pixabay fetch is confirmed permanently blocked (403, Cloudflare
+  bot protection) — the `/preview` + `/import` endpoints and `musicImport.js`
+  were removed; all track-adding routes audio through a browser now
 - BPM auto-detection (`src/services/bpmDetect.js`) is untested against real
   downloaded tracks — verify the first few imports sound right at the
   reported BPM before trusting it unattended; correct via `PATCH /api/music/:id`
