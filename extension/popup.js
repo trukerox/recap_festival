@@ -13,6 +13,14 @@
 const APP_BASE = "https://festival_recap.homeserver.fritz.box";
 const api = globalThis.browser ?? globalThis.chrome;
 
+const HOST_PERMS = {
+  origins: [
+    "https://festival_recap.homeserver.fritz.box/*",
+    "https://pixabay.com/*",
+    "https://cdn.pixabay.com/*",
+  ],
+};
+
 const statusEl = document.getElementById("status");
 const genreSel = document.getElementById("genre");
 const addBtn = document.getElementById("add");
@@ -20,6 +28,21 @@ const addBtn = document.getElementById("add");
 function setStatus(msg, isErr = false) {
   statusEl.textContent = msg;
   statusEl.className = isErr ? "err" : "";
+}
+
+// Firefox MV3 does not auto-grant host_permissions — they're optional and must
+// be granted by the user, or scripting.executeScript + cross-site fetch fail
+// with an opaque permission error. Requesting them here (from the button's
+// user gesture) shows a one-time grant prompt instead of failing silently.
+async function ensurePermissions() {
+  if (!api.permissions) return true; // API absent (old browser) — let fetch surface the real error
+  try {
+    if (await api.permissions.contains(HOST_PERMS)) return true;
+    return await api.permissions.request(HOST_PERMS);
+  } catch (e) {
+    setStatus(`Could not request site permissions: ${e.message}`, true);
+    return false;
+  }
 }
 
 // Injected into the active tab (runs in page context). Reads the schema.org
@@ -70,10 +93,16 @@ function filenameFrom(contentUrl, title) {
 addBtn.addEventListener("click", async () => {
   addBtn.disabled = true;
   try {
+    setStatus("Checking permissions…");
+    if (!(await ensurePermissions())) {
+      setStatus("Site permissions were denied — click again and choose Allow, or grant them in about:addons → this extension → Permissions.", true);
+      return;
+    }
+
     setStatus("Reading page…");
     const [tab] = await api.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https:\/\/pixabay\.com\/music\//.test(tab.url || "")) {
-      setStatus("Open a Pixabay music track page first (pixabay.com/music/…).", true);
+      setStatus(`This tab isn't a Pixabay track page. Open pixabay.com/music/… and click again. (current: ${tab?.url || "unknown"})`, true);
       return;
     }
 
