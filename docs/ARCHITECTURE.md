@@ -159,8 +159,10 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
 | `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
 | `POST` | `/api/music/upload` | **The only server-side add path.** Multipart upload of an mp3 (field `audio`) + `title`/`genre`/`artist?`/`license?`/`sourceUrl?`/`bpm?`; auto-detects BPM from the file, upserts the DB row. The audio always comes from a browser (upload form or extension) — the server never fetches the source site. |
+| `GET`  | `/api/music/:id/audio` | Streams the track's audio (Range-enabled) for the Music tab's in-line `<audio>` preview |
 | `PATCH` | `/api/music/:id/active` | Toggle a track active/inactive — body: `{ active: bool }` |
 | `PATCH` | `/api/music/:id` | Correct a track's `bpm`/`genre` after the fact (e.g. auto-detection was off by an octave) |
+| `DELETE` | `/api/music/:id` | Delete a track (DB row + audio file); past render jobs unaffected (`music_track_id` is `ON DELETE SET NULL`) |
 
 No auth layer in v1 — this is a single-operator tool behind the Pi's LAN-only
 Caddy site (`tls internal`, no public exposure). Add a shared upload token or
@@ -263,32 +265,28 @@ auto-detecting BPM from the audio:**
 - **Upload form (no extension)** — download the mp3 in your browser yourself
   and upload the file via the Music tab. Same endpoint, manual download.
 
-BPM auto-detection (shared by both paths) rather than an external API or a
-manual measurement:
+BPM is detected from the audio itself (never an external API — no BPM API
+does real analysis of arbitrary uploads; they're metadata lookups keyed by
+song title, unreliable for grabbed tracks, and would break the no-external-
+calls posture). Two tiers, in `src/services/bpmDetect.js`:
 
-1. ffmpeg low-passes the track (`lowpass=f=150`) to isolate bass/kick energy
-   — the clearest beat signal for the EDM/festival/dubstep genres this tool
-   targets — decoded to mono PCM at 11025Hz, a ~30s middle chunk only (skips
-   the intro).
-2. A short-time energy envelope (10ms windows) is autocorrelated over the
-   60-200 BPM lag range; the strongest periodicity wins.
-3. The normalised autocorrelation peak doubles as a rough confidence score,
-   returned (not persisted) alongside the created track so the UI can show
-   e.g. "128 BPM — confidence 74%".
+1. **Primary — aubio** (`scripts/bpm_aubio.py`, `python3-aubio` in the image):
+   Node decodes the track to a temp WAV with ffmpeg, then aubio's onset-based
+   beat tracker finds the beats; BPM is the median inter-beat interval and
+   confidence comes from how steady those intervals are. aubio is a mature,
+   purpose-built beat-tracking library — substantially more accurate on real
+   music than a hand-rolled estimator.
+2. **Fallback — energy-envelope autocorrelation** (used only if aubio/ffmpeg
+   is missing or errors): ffmpeg low-passes to isolate bass/kick, and the
+   energy envelope is autocorrelated over the 60-200 BPM range. Cruder and
+   prone to harmonic (half/double) errors — hence it's the fallback.
 
-This is a standard, well-established lightweight beat-detection technique —
-no ML model, no new native dependency, fits the same CPU-only philosophy as
-the media quality scoring in §5. **Known, unavoidable limitation**: naive
-autocorrelation can lock onto a harmonic of the true tempo (reporting half or
-double, e.g. 70 vs 140) — genuinely common with this class of detector, not
-a bug to fix. The result is always editable: `PATCH /api/music/:id` corrects
-`bpm`/`genre` after the fact, exposed in the Music tab as a click-to-edit
-BPM cell in the library table.
-
-No BPM source (Pixabay's page, or any other metadata site) publishes real
-BPM, so before a file is downloaded (the `/preview` step) only a
-genre-typical default is available — real detection can only happen after
-the audio exists on disk, i.e. during `/import`.
+Both results are octave-folded into a musical 70-180 range (`foldTempo`) to
+catch gross octave errors, and both stay **editable**: `PATCH /api/music/:id`
+corrects `bpm`/`genre`, exposed in the Music tab as a click-to-edit BPM cell.
+Confidence is returned (not persisted) so the UI can show e.g.
+"128 BPM — confidence 74%". Real detection only happens after the audio
+exists on disk (during `/upload`); no metadata site publishes real BPM.
 
 ---
 
@@ -330,7 +328,7 @@ provider fallback).
 
 ```
 festival_recap/
-├── docker/Dockerfile           # node:20-bookworm-slim + ffmpeg + python3-opencv + fonts
+├── docker/Dockerfile           # node:20-bookworm-slim + ffmpeg + python3-opencv + python3-aubio + fonts
 ├── docker-compose.yml          # single service, shared mariadb, /mnt/storage volume
 ├── deploy/
 │   ├── setup-pi.sh             # one-time bootstrap (clone, secrets, data dir)
@@ -339,6 +337,7 @@ festival_recap/
 ├── scripts/
 │   ├── sql/000_create_db_user.sql
 │   ├── face_count.py           # OpenCV Haar cascade face/crowd heuristic
+│   ├── bpm_aubio.py            # aubio onset-based BPM (primary detector)
 │   ├── seed-music.js           # loads music/library.json into music_tracks
 │   └── cleanup.js              # retention cleanup (RETENTION_DAYS)
 ├── music/                       # BOOTSTRAP TEMPLATE ONLY — not read at runtime.
@@ -368,7 +367,7 @@ festival_recap/
     │   ├── mediaAnalysis.js      # orchestrates scoring → composite_score
     │   ├── selection.js          # builds the 20s timeline
     │   ├── videoComposer.js      # ffmpeg filter_complex graph + render
-    │   └── bpmDetect.js          # ffmpeg lowpass + autocorrelation BPM estimate + genre-default fallback
+    │   └── bpmDetect.js          # BPM: aubio (primary) → autocorrelation (fallback) + genre-default
     ├── queue/worker.js           # DB-polling render worker
     └── utils/{secrets,logger,checksum,slugify}.js
 ```

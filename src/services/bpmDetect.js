@@ -1,16 +1,24 @@
-// Estimates BPM directly from the downloaded audio file — no external API,
-// no heavy ML dependency (fits the same CPU-only philosophy as the rest of
-// the scoring pipeline). Approach: ffmpeg low-passes the track to isolate
-// bass/kick energy (the clearest beat signal in EDM/festival/dubstep — the
-// genres this tool cares about most), decodes to raw mono PCM, computes a
-// short-time energy envelope, then autocorrelates that envelope over the
-// 60-200 BPM lag range and picks the strongest periodicity.
+// BPM detection, CPU-only, no external API.
 //
-// Known limitation: naive autocorrelation on a real track can lock onto a
-// harmonic of the true tempo (reporting half or double, e.g. 70 vs 140).
-// This is a real, unavoidable limitation of the technique, not a bug — the
-// result is always shown as editable, never as unquestionable fact.
-import { spawn } from "node:child_process";
+// PRIMARY: aubio (a mature onset-based beat tracker) via scripts/bpm_aubio.py.
+// Node decodes the track to a temp WAV with ffmpeg, then aubio analyses it.
+// This is much more accurate on real music than the fallback below.
+//
+// FALLBACK (aubio missing/errored): the original hand-rolled estimator —
+// ffmpeg low-passes the track to isolate bass/kick energy, decodes to raw
+// mono PCM, and autocorrelates the energy envelope. Cruder; can lock onto a
+// harmonic (report half/double the true tempo). Either way the result is
+// always shown as editable, never as unquestionable fact.
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import config from "../config/index.js";
+
+const execFileAsync = promisify(execFile);
+const AUBIO_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "bpm_aubio.py");
 
 const SAMPLE_RATE = 11025; // plenty for beat-envelope analysis, keeps the buffer small
 const ANALYZE_SECONDS = 30; // a representative middle chunk is enough; skip the intro
@@ -18,6 +26,15 @@ const SKIP_INTRO_SECONDS = 5;
 const WINDOW_MS = 10;
 const MIN_BPM = 60;
 const MAX_BPM = 200;
+
+// Fold a tempo into a musical 70-180 range to guard against octave errors
+// (a detector reporting 200 or 60 gets folded toward the plausible tempo).
+function foldTempo(bpm) {
+  let b = bpm;
+  while (b > 180) b /= 2;
+  while (b < 70) b *= 2;
+  return Math.round(b);
+}
 
 function decodeMonoPcm(filePath) {
   return new Promise((resolve, reject) => {
@@ -91,14 +108,40 @@ function autocorrelateBpm(envelope, windowMs, minBpm, maxBpm) {
   return { bpm, confidence };
 }
 
+// Primary path: ffmpeg → temp WAV → aubio. Returns null (not throws) if aubio
+// isn't available or produced nothing usable, so the caller falls back.
+async function detectBpmAubio(filePath) {
+  const wav = join(config.paths.tmpDir, `${randomUUID()}.wav`);
+  try {
+    await execFileAsync("ffmpeg", ["-v", "error", "-i", filePath, "-ac", "1", "-ar", "22050", wav], {
+      timeout: 60_000,
+    });
+    const { stdout } = await execFileAsync("python3", [AUBIO_SCRIPT, wav], { timeout: 60_000 });
+    const parsed = JSON.parse(stdout);
+    if (parsed && parsed.bpm) {
+      return { bpm: foldTempo(parsed.bpm), confidence: parsed.confidence ?? null, source: "aubio" };
+    }
+    return null;
+  } catch {
+    return null; // aubio/ffmpeg missing or failed — caller falls back
+  } finally {
+    await unlink(wav).catch(() => {});
+  }
+}
+
 export async function detectBpm(filePath) {
+  const viaAubio = await detectBpmAubio(filePath);
+  if (viaAubio) return viaAubio;
+
+  // Fallback: naive energy-envelope autocorrelation.
   const samples = await decodeMonoPcm(filePath);
   if (samples.length < SAMPLE_RATE) {
     // Track shorter than the intro-skip + analysis window — bail out cleanly.
     return { bpm: null, confidence: 0 };
   }
   const envelope = energyEnvelope(samples, SAMPLE_RATE, WINDOW_MS);
-  return autocorrelateBpm(envelope, WINDOW_MS, MIN_BPM, MAX_BPM);
+  const result = autocorrelateBpm(envelope, WINDOW_MS, MIN_BPM, MAX_BPM);
+  return { bpm: foldTempo(result.bpm), confidence: result.confidence, source: "autocorrelation" };
 }
 
 // Rough genre-typical tempo, NOT a measurement — used only as the fallback

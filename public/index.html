@@ -135,7 +135,7 @@
       <legend>Library</legend>
       <button id="refreshMusicBtn" class="secondary">Refresh</button>
       <table id="musicTable">
-        <thead><tr><th>Title</th><th>Genre</th><th>BPM</th><th>Active</th></tr></thead>
+        <thead><tr><th>Title</th><th>Genre</th><th>BPM</th><th>Active</th><th>Preview</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
     </fieldset>
@@ -338,12 +338,18 @@ async function loadMusicLibrary() {
   tbody.innerHTML = '';
   for (const t of tracks) {
     const tr = document.createElement('tr');
-    const bpmCell = document.createElement('td');
-    bpmCell.textContent = t.bpm;
-    bpmCell.style.cursor = 'pointer';
-    bpmCell.style.textDecoration = 'underline dotted';
-    bpmCell.title = 'Click to correct this BPM';
-    bpmCell.addEventListener('click', async () => {
+
+    const titleTd = document.createElement('td');
+    titleTd.textContent = t.title;
+    const genreTd = document.createElement('td');
+    genreTd.textContent = t.genre;
+
+    const bpmTd = document.createElement('td');
+    bpmTd.textContent = t.bpm;
+    bpmTd.style.cursor = 'pointer';
+    bpmTd.style.textDecoration = 'underline dotted';
+    bpmTd.title = 'Click to correct this BPM';
+    bpmTd.addEventListener('click', async () => {
       const next = prompt(`Correct BPM for "${t.title}" (currently ${t.bpm}):`, t.bpm);
       if (!next || Number.isNaN(Number(next))) return;
       const patchRes = await fetch(`/api/music/${t.id}`, {
@@ -354,9 +360,32 @@ async function loadMusicLibrary() {
       if (patchRes.ok) loadMusicLibrary();
       else alert('Failed to update: ' + (await patchRes.text()));
     });
-    tr.innerHTML = `<td>${t.title}</td><td>${t.genre}</td>`;
-    tr.appendChild(bpmCell);
-    tr.insertAdjacentHTML('beforeend', `<td>${t.active ? 'yes' : 'no'}</td>`);
+
+    const activeTd = document.createElement('td');
+    activeTd.textContent = t.active ? 'yes' : 'no';
+
+    const previewTd = document.createElement('td');
+    const audio = document.createElement('audio');
+    audio.controls = true;
+    audio.preload = 'none';
+    audio.src = `/api/music/${t.id}/audio`;
+    audio.style.height = '32px';
+    audio.style.maxWidth = '190px';
+    previewTd.appendChild(audio);
+
+    const delTd = document.createElement('td');
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.className = 'secondary';
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete "${t.title}"? This removes the file and its library entry.`)) return;
+      const r = await fetch(`/api/music/${t.id}`, { method: 'DELETE' });
+      if (r.ok) loadMusicLibrary();
+      else alert('Delete failed: ' + (await r.text()));
+    });
+    delTd.appendChild(delBtn);
+
+    tr.append(titleTd, genreTd, bpmTd, activeTd, previewTd, delTd);
     tbody.appendChild(tr);
   }
 }

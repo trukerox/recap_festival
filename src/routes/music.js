@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
+import { unlink } from "node:fs/promises";
 import { httpError } from "../middleware/errorHandler.js";
 import { musicUpload } from "../middleware/upload.js";
-import { listActive, listAll, upsertTrack, setActive, updateFields } from "../repositories/musicTracks.js";
+import { listActive, listAll, getById, upsertTrack, setActive, updateFields, deleteById } from "../repositories/musicTracks.js";
 import { detectBpm, genreDefaultBpm } from "../services/bpmDetect.js";
 import { probeAudioDuration } from "../services/mediaProbe.js";
 
@@ -86,6 +87,34 @@ musicRouter.patch("/:id/active", async (req, res, next) => {
   try {
     const active = Boolean(req.body?.active);
     res.json(await setActive(req.params.id, active));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Streams the track's audio for in-app preview. res.sendFile handles Range
+// requests (206) so the browser <audio> element can seek. file_path is always
+// a repo-relative "music/<slug>.<ext>" we generated — safe to resolve.
+musicRouter.get("/:id/audio", async (req, res, next) => {
+  try {
+    const track = await getById(req.params.id);
+    if (!track) throw httpError(404, "Track not found");
+    res.sendFile(resolve(process.cwd(), track.file_path), (err) => {
+      if (err && !res.headersSent) next(err);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Deletes a track (DB row + audio file). Past render jobs are unaffected
+// (music_track_id is ON DELETE SET NULL).
+musicRouter.delete("/:id", async (req, res, next) => {
+  try {
+    const track = await deleteById(req.params.id);
+    if (!track) throw httpError(404, "Track not found");
+    await unlink(resolve(process.cwd(), track.file_path)).catch(() => {});
+    res.json({ ok: true, deleted: track.id });
   } catch (err) {
     next(err);
   }

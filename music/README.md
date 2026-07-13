@@ -24,8 +24,10 @@ Two browser-based ways in the **Music** tab, both auto-detecting BPM:
   and fill in title/genre. Works without the extension.
 
 Either way, with "Auto-detect BPM" the server measures the real tempo from the
-audio itself (ffmpeg lowpass filter + energy-envelope autocorrelation — see
-`src/services/bpmDetect.js`) instead of guessing from genre.
+audio itself — primarily via **aubio** (a proper onset-based beat tracker;
+`scripts/bpm_aubio.py`), falling back to a simpler energy autocorrelation if
+aubio is unavailable — instead of guessing from genre. See
+`src/services/bpmDetect.js`.
 
 **Why is the audio always downloaded in the browser, never by the server?**
 Pixabay sits behind Cloudflare-style bot protection that returns **HTTP 403 to
@@ -33,11 +35,10 @@ any server-side request** — verified with full browser headers from a
 residential IP, still blocked. Only a real browser (yours) gets through. The
 old server-side scrape/download path was removed once this was confirmed.
 
-Simple autocorrelation-based BPM detectors have one well-known, unavoidable
-failure mode: they can lock onto a harmonic and report half or double the true
-tempo (e.g. 70 vs 140). The result shows a confidence percentage, and the
-library table's BPM column is click-to-edit if a value sounds wrong once you
-hear the render.
+Even aubio can occasionally miss (report half/double the true tempo). The
+result shows a confidence percentage, and the library table's BPM column is
+click-to-edit if a value sounds wrong once you hear the render. Each library
+row also has an inline audio preview and a Delete button.
 
 Implementation: `src/routes/music.js` (`POST /api/music/upload` — the single
 add endpoint; `PATCH /api/music/:id` to correct bpm/genre afterwards),

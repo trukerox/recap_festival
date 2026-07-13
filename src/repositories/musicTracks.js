@@ -41,6 +41,16 @@ export async function setActive(id, active) {
   return getById(id);
 }
 
+// Returns the deleted row (so the caller can unlink its file), or null if it
+// didn't exist. render_jobs.music_track_id is ON DELETE SET NULL, so past
+// jobs are unaffected.
+export async function deleteById(id) {
+  const track = await getById(id);
+  if (!track) return null;
+  await query("DELETE FROM music_tracks WHERE id = ?", [id]);
+  return track;
+}
+
 // Partial update for correcting an auto-detected BPM or a misjudged genre
 // after the fact — both are best-effort guesses, never presented as certain.
 export async function updateFields(id, { bpm, genre } = {}) {

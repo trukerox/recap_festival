@@ -60,12 +60,17 @@ database, own user, no cross-database access).
   replaced it by fetching in your logged-in browser. Extension files:
   `extension/{manifest.json,popup.js,content-app.js,background.js}` (Firefox
   MV3, modelled on job_search's; host_permissions are NOT auto-granted — the
-  popup requests them via `permissions.request()`). BPM is
-  never *published* anywhere, but IS auto-detected from the audio itself (ffmpeg
-  lowpass + energy-envelope autocorrelation, `src/services/bpmDetect.js`) — a
-  real measurement, though simple autocorrelation can lock onto a harmonic
-  (report half/double); shown with a confidence % and correctable via
-  `PATCH /api/music/:id`.
+  popup requests them via `permissions.request()`). Library table has in-line
+  `<audio>` preview (`GET /api/music/:id/audio`, Range-enabled) + a Delete
+  button (`DELETE /api/music/:id`, unlinks file; render_jobs FK is SET NULL).
+  BPM is auto-detected from the audio (`src/services/bpmDetect.js`): PRIMARY is
+  **aubio** (onset beat-tracker, `scripts/bpm_aubio.py`, `python3-aubio` in the
+  image — Node ffmpeg-decodes to temp WAV, aubio finds beats); FALLBACK is the
+  old energy-envelope autocorrelation if aubio errors. Results octave-folded to
+  70-180 (`foldTempo`), shown with confidence %, correctable via
+  `PATCH /api/music/:id` (click the BPM cell). NO external BPM API — they're
+  metadata lookups, unreliable for arbitrary uploads, and break the
+  no-external-calls posture.
 
 ## File conventions
 - DB migrations: `src/db/migrations/NNN_description.sql`
@@ -85,8 +90,8 @@ database, own user, no cross-database access).
 - Server-side Pixabay fetch is confirmed permanently blocked (403, Cloudflare
   bot protection) — the `/preview` + `/import` endpoints and `musicImport.js`
   were removed; all track-adding routes audio through a browser now
-- BPM auto-detection (`src/services/bpmDetect.js`) is untested against real
-  downloaded tracks — verify the first few imports sound right at the
-  reported BPM before trusting it unattended; correct via `PATCH /api/music/:id`
-  if the confidence is low or the render's cuts feel off-beat (likely octave
-  error — the detector reported half/double the true tempo)
+- BPM auto-detection now uses aubio (primary) — much better than the old
+  autocorrelation, but still verify the first few tracks by ear and correct via
+  the click-to-edit BPM cell if a render's cuts feel off-beat. aubio path is
+  untested on the actual Pi (needs `python3-aubio` in the rebuilt image); if it
+  errors it silently falls back to the cruder autocorrelation
