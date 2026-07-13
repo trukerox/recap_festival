@@ -45,19 +45,21 @@ database, own user, no cross-database access).
   (`src/queue/worker.js`), `RENDER_CONCURRENCY=1` by default
 - Music: local curated library at `/mnt/storage/festival_recap/music`
   (library.json + audio files), no external API call at render time. Adding
-  tracks — PRIMARY path is the "Music" tab's file upload (`POST
-  /api/music/upload`): you download the mp3 in your browser, upload the file,
-  server auto-detects BPM + upserts. The paste-a-URL import (`preview` +
+  tracks, three ways, all ending in `POST /api/music/upload` + BPM auto-detect:
+  (1) **browser extension** (`extension/`, smoothest — Firefox MV3 modelled on
+  job_search's; reads the Pixabay page's JSON-LD, fetches the mp3 in-browser,
+  POSTs the file — one click, no download/typing); (2) **Music tab upload form**
+  (download mp3 yourself, upload the file); (3) manual `library.json` +
+  `scripts/seed-music.js` (bulk/offline). The paste-a-URL import (`preview` +
   `import`, `src/services/musicImport.js`) is DEAD for Pixabay — Pixabay's
   Cloudflare bot protection 403s every server-side fetch (confirmed 2026-07-13,
-  even full browser headers from a residential IP); kept only for hypothetical
-  non-blocking sources. BPM is never *published* anywhere, but IS auto-detected
-  from the audio itself (ffmpeg lowpass + energy-envelope autocorrelation,
-  `src/services/bpmDetect.js`) — a real measurement, though simple
-  autocorrelation can lock onto a harmonic (report half/double the true tempo);
-  shown with a confidence % and correctable via `PATCH /api/music/:id`. Bulk/
-  offline alternative: manual `library.json` + `scripts/seed-music.js` (see
-  `music/README.md`).
+  even full browser headers from a residential IP); the extension exists
+  precisely to route around this by fetching in your logged-in browser. BPM is
+  never *published* anywhere, but IS auto-detected from the audio itself (ffmpeg
+  lowpass + energy-envelope autocorrelation, `src/services/bpmDetect.js`) — a
+  real measurement, though simple autocorrelation can lock onto a harmonic
+  (report half/double); shown with a confidence % and correctable via
+  `PATCH /api/music/:id`.
 
 ## File conventions
 - DB migrations: `src/db/migrations/NNN_description.sql`

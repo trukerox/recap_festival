@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "festival_recap track grabber",
+  "version": "1.0.0",
+  "description": "Grabs the current royalty-free music track (e.g. Pixabay) from your logged-in browser and adds it to festival_recap — bypassing the server-side bot block that 403s a direct fetch.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "track-grabber@festival-recap.local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": [
+    "https://festival_recap.homeserver.fritz.box/*",
+    "https://pixabay.com/*",
+    "https://cdn.pixabay.com/*"
+  ],
+  "action": {
+    "default_title": "festival_recap track grabber",
+    "default_popup": "popup.html"
+  }
+}

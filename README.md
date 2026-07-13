@@ -49,6 +49,14 @@ full endpoint list. Quick flow: `POST /api/projects` → `POST
 /api/projects/:id/media` (upload) → `POST /api/projects/:id/render` → poll
 `GET /api/jobs/:id` → `GET /api/jobs/:id/download`.
 
+## Music
+
+Add royalty-free tracks via the **Music** tab (upload a downloaded mp3 — the
+server auto-detects BPM), or install the [browser extension](extension/) to
+grab the Pixabay track you're viewing with one click. Pixabay blocks
+server-side downloads (bot protection), so the file always comes from your
+browser. See [music/README.md](music/README.md).
+
 ## Status
 
 v1 baseline — functional end-to-end pipeline, not yet run against real

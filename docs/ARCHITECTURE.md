@@ -237,24 +237,34 @@ Implemented in [src/services/selection.js](../src/services/selection.js):
 
 ### Music library & BPM detection ([src/services/musicImport.js](../src/services/musicImport.js), [src/services/bpmDetect.js](../src/services/bpmDetect.js))
 
-**Two ways to add a track, both landing the mp3 in
-`/mnt/storage/festival_recap/music` and both auto-detecting BPM from the
+**Three ways to add a track, all landing the mp3 in
+`/mnt/storage/festival_recap/music` and all auto-detecting BPM from the
 audio:**
 
-- **Upload (primary, reliable)** — `POST /api/music/upload`. You download the
-  mp3 in your browser and upload the file; the server probes duration and
-  detects BPM. This exists because the URL path below does not work for
-  Pixabay: **Pixabay sits behind Cloudflare-style bot protection that
-  fingerprints the TLS handshake and returns HTTP 403 to any server-side
-  request** — verified with full browser headers from a residential IP, still
-  403. Only a real browser (yours) gets through, so the file has to come from
-  you. Defeating this server-side would need a full headless Chromium on the
-  Pi — too heavy/fragile to justify.
+- **Browser extension (smoothest)** — `extension/` folder, a Firefox MV3
+  add-on modelled on the job_search JD-fetcher. On a Pixabay track page, one
+  click reads the page's `AudioObject` JSON-LD, fetches the mp3 **in the
+  browser** (which passes the bot check), and POSTs the file + metadata to
+  `POST /api/music/upload`. The server never touches Pixabay. No download,
+  no typing. See `extension/README.md`.
+- **Upload form (reliable, no extension)** — `POST /api/music/upload`. You
+  download the mp3 in your browser and upload the file via the Music tab; the
+  server probes duration and detects BPM. This exists because the URL path
+  below does not work for Pixabay: **Pixabay sits behind Cloudflare-style bot
+  protection that fingerprints the TLS handshake and returns HTTP 403 to any
+  server-side request** — verified with full browser headers from a
+  residential IP, still 403. Only a real browser (yours) gets through, so the
+  file has to come from you. Defeating this server-side would need a full
+  headless Chromium on the Pi — too heavy/fragile to justify.
 - **URL import (advanced, usually blocked)** — `GET /api/music/preview` →
   `POST /api/music/import`. Scrapes Pixabay's per-track schema.org
   `AudioObject` JSON-LD block (title/artist/duration/license + direct CDN mp3
   URL) and downloads the file server-side. Kept for any future non-blocking
   source, but 403s on Pixabay today.
+
+The extension and the upload form hit the **same** `POST /api/music/upload`
+endpoint — the extension just automates the download+fill step in the
+browser. The server is identical either way.
 
 BPM auto-detection (shared by both paths) rather than an external API or a
 manual measurement:
@@ -338,6 +348,10 @@ festival_recap/
 │   ├── library.json             # copied to /mnt/storage/festival_recap/music once by setup-pi.sh
 │   └── README.md                # how to source/add royalty-free tracks
 ├── public/index.html           # minimal upload/status/preview frontend
+├── extension/                   # Firefox MV3 add-on: one-click Pixabay track grab
+│   ├── manifest.json            # host_permissions: pixabay, cdn.pixabay, festival_recap
+│   ├── popup.html / popup.js    # read page JSON-LD → fetch mp3 in-browser → POST /api/music/upload
+│   └── README.md                # install + how it bypasses the server-side bot block
 └── src/
     ├── server.js                # Express app + starts the in-process worker loop
     ├── config/index.js
