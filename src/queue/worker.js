@@ -64,9 +64,8 @@ async function processJob(job) {
   await composeVideo({
     timeline,
     musicTrack,
-    watermarkPath: project.watermark_path || null,
+    eventName: project.event_name,
     titleText: buildTitleText(project),
-    ctaText: project.cta_text,
     outputPath,
     onProgress: (p) => {
       // p.percent is unreliable for filter_complex graphs (ffmpeg can't always

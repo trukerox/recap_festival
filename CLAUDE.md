@@ -37,6 +37,13 @@ database, own user, no cross-database access).
 
 ## Stack
 - Node 20 / Express, mysql2, multer (uploads), fluent-ffmpeg, sharp, pino logging
+- Render (`src/services/videoComposer.js`): landscape photos get a horizontal
+  Ken Burns pan across their full width (not centre-crop); portrait/square get
+  zoom-fill; xfade transitions; opening title drawtext; ends on a branded end
+  card (`src/services/endCard.js` — SVG → PNG via `rsvg-convert`/`librsvg2-bin`,
+  Evestival brand orange #E07A1E, evestival.com CTA). NO floating watermark.
+  ffmpeg gotcha: map outputs via `-map` in outputOptions only, NOT also via
+  complexFilter's 2nd arg (double-maps → "label already used" error).
 - Media scoring: `sharp` (sharpness/brightness/contrast) + ffprobe
   `blurdetect`/`signalstats` (video) + OpenCV Haar cascade via Python
   subprocess (`scripts/face_count.py`) for face/crowd count — all CPU-only,

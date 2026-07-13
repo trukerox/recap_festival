@@ -220,16 +220,26 @@ Implemented in [src/services/selection.js](../src/services/selection.js):
 
 ### Video composition ([src/services/videoComposer.js](../src/services/videoComposer.js))
 
-- **Photos**: `zoompan` Ken Burns (slow zoom to 1.2x + alternating left/right
-  pan per segment, direction alternates by index for variety).
+- **Landscape photos**: horizontal Ken Burns — scaled to frame height, then a
+  9:16 crop window pans left→right (alternating direction per segment) across
+  the full width, so the whole scene is revealed instead of being centre-
+  cropped. Orientation comes from the source `width`/`height` on each timeline
+  item.
+- **Portrait/square photos**: fill the frame + slow `zoompan` zoom.
 - **Video clips**: trimmed to the pre-scored best window (see §5 motion
-  scoring), `eq` filter for saturation/contrast/brightness lift.
+  scoring), cover-cropped, `eq` colour lift.
 - **Transitions**: `xfade` between every consecutive pair, cycling through
   `fade / wipeleft / slideup / circleopen / wiperight / slideleft` (0.35s
   each) for "fast but smooth" cuts.
-- **Text**: `drawtext` (via `textfile=`, avoiding filter-string escaping
-  issues) for the event title (0-3s) and the CTA (last 3s).
-- **Watermark**: optional logo `overlay`'d for the full duration.
+- **Opening title**: `drawtext` (via `textfile=`, avoiding filter-string
+  escaping) with the event name over the first ~3s.
+- **End card** ([src/services/endCard.js](../src/services/endCard.js)): the
+  final ~3s is a professionally designed branded card — an SVG (Evestival logo,
+  brand-orange `evestival.com` CTA button, tagline, optional event name)
+  rasterised to a 1080x1920 PNG via `rsvg-convert` (`librsvg2-bin`) and used as
+  the last timeline segment (subtle zoom, xfade in). Falls back to the selected
+  closing photo if `rsvg-convert` is unavailable. **No floating watermark** —
+  branding lives on the end card.
 - **Audio**: the chosen music track only (no original clip audio is kept —
   ambient festival audio is rarely worth preserving over a proper track),
   trimmed to the render length with a short fade in/out.
@@ -328,7 +338,7 @@ provider fallback).
 
 ```
 festival_recap/
-├── docker/Dockerfile           # node:20-bookworm-slim + ffmpeg + python3-opencv + python3-aubio + fonts
+├── docker/Dockerfile           # node:20-bookworm-slim + ffmpeg + python3-opencv + python3-aubio + librsvg2-bin + fonts
 ├── docker-compose.yml          # single service, shared mariadb, /mnt/storage volume
 ├── deploy/
 │   ├── setup-pi.sh             # one-time bootstrap (clone, secrets, data dir)
@@ -367,6 +377,7 @@ festival_recap/
     │   ├── mediaAnalysis.js      # orchestrates scoring → composite_score
     │   ├── selection.js          # builds the 20s timeline
     │   ├── videoComposer.js      # ffmpeg filter_complex graph + render
+    │   ├── endCard.js            # branded SVG end card → PNG (rsvg-convert)
     │   └── bpmDetect.js          # BPM: aubio (primary) → autocorrelation (fallback) + genre-default
     ├── queue/worker.js           # DB-polling render worker
     └── utils/{secrets,logger,checksum,slugify}.js

@@ -26,6 +26,10 @@ function toTimelineItem(row, role, duration) {
     role,
     duration,
     shotType: row.shot_type,
+    // Source dimensions so the composer can pan landscape photos across their
+    // width instead of center-cropping them (see videoComposer.segmentFilter).
+    srcWidth: row.width ?? null,
+    srcHeight: row.height ?? null,
     // For video, trim to the pre-scored best window, but never exceed `duration`.
     trimStart: isVideo ? Number(row.trim_start_seconds ?? 0) : null,
     trimEnd: isVideo ? Number(row.trim_start_seconds ?? 0) + duration : null,

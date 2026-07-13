@@ -10,7 +10,7 @@ WORKDIR /app
 # the lightweight face/crowd-count helper (scripts/face_count.py). Using the
 # apt package (not pip) avoids building opencv from source on ARM64.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg python3 python3-opencv python3-aubio fonts-dejavu-core \
+ && apt-get install -y --no-install-recommends ffmpeg python3 python3-opencv python3-aubio fonts-dejavu-core librsvg2-bin \
  && rm -rf /var/lib/apt/lists/*
 
 # Install deps first for layer caching. Only production deps.

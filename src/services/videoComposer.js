@@ -1,43 +1,76 @@
 // Builds and runs the ffmpeg filter_complex graph that turns a selected
 // timeline (see services/selection.js) into the final 20s 1080x1920 recap:
-// Ken Burns pan/zoom on photos, xfade transitions between every segment,
-// color/vibrance grading, title + CTA text cards, an optional logo
-// watermark, and the chosen music track mixed in as the only audio.
+// Ken Burns motion on photos (horizontal pan across landscape shots, zoom on
+// portrait), xfade transitions between every segment, color grading, an
+// opening title, a professional branded end card (services/endCard.js), and
+// the chosen music track as the only audio. No floating watermark.
 import ffmpeg from "fluent-ffmpeg";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import config from "../config/index.js";
+import { generateEndCard } from "./endCard.js";
 
 const TRANSITION_DURATION = 0.35;
 const TRANSITIONS = ["fade", "wipeleft", "slideup", "circleopen", "wiperight", "slideleft"];
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
+// A source is "wide" (pan it) when it's wider than the 9:16 target aspect —
+// true for almost every non-portrait photo. Portrait shots fall through to the
+// fill-zoom branch instead.
+function isWide(item, width, height) {
+  return item.srcWidth && item.srcHeight && item.srcWidth / item.srcHeight > width / height;
+}
+
 function segmentFilter({ item, index, width, height }) {
   const label = `v${index}`;
-  if (item.kind === "photo") {
-    // Alternate pan direction per segment for visual variety; zoom is capped
-    // at 1.2x over the segment so it never overshoots and reveals padding.
-    const panSign = index % 2 === 0 ? 1 : -1;
-    const totalFrames = Math.max(1, Math.round(item.duration * 30));
-    const zoomStep = (0.2 / totalFrames).toFixed(6);
-    const filter =
-      `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-      `crop=${width}:${height},` +
-      `zoompan=z='min(zoom+${zoomStep},1.2)':` +
-      `x='iw/2-(iw/zoom/2)+on*${(panSign * 0.4).toFixed(2)}':` +
-      `y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
-      `setsar=1[${label}]`;
-    return { label, filter };
+  const frames = Math.max(1, Math.round(item.duration * 30));
+
+  // Branded end card: already width x height; give it a subtle slow zoom.
+  if (item.kind === "card") {
+    const zoomStep = (0.08 / frames).toFixed(6);
+    return {
+      label,
+      filter:
+        `[${index}:v]scale=${width}:${height},` +
+        `zoompan=z='min(zoom+${zoomStep},1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
+        `setsar=1[${label}]`,
+    };
   }
 
-  const filter =
-    `[${index}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
-    `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-    `crop=${width}:${height},` +
-    `eq=saturation=1.25:contrast=1.05:brightness=0.02,` +
-    `fps=30,setsar=1[${label}]`;
-  return { label, filter };
+  // Landscape photo: horizontal Ken Burns pan across the FULL width. Scale to
+  // the frame height, then slide a 9:16 crop window left→right (or right→left
+  // on odd segments) so the whole scene is revealed instead of centre-cropped.
+  if (item.kind === "photo" && isWide(item, width, height)) {
+    const dir = index % 2 === 0 ? `n/${frames}` : `(1-n/${frames})`;
+    return {
+      label,
+      filter:
+        `[${index}:v]scale=-2:${height},eq=saturation=1.2:contrast=1.04,` +
+        `crop=${width}:${height}:x='(in_w-${width})*${dir}':y=0,setsar=1,fps=30[${label}]`,
+    };
+  }
+
+  // Portrait/square photo: fill the frame and slow-zoom (classic Ken Burns).
+  if (item.kind === "photo") {
+    const zoomStep = (0.2 / frames).toFixed(6);
+    return {
+      label,
+      filter:
+        `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
+        `zoompan=z='min(zoom+${zoomStep},1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
+        `eq=saturation=1.2:contrast=1.04,setsar=1[${label}]`,
+    };
+  }
+
+  // Video clip: cover-crop to fill + colour lift.
+  return {
+    label,
+    filter:
+      `[${index}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
+      `eq=saturation=1.25:contrast=1.05:brightness=0.02,fps=30,setsar=1[${label}]`,
+  };
 }
 
 function xfadeChain(segmentLabels, durations) {
@@ -67,63 +100,52 @@ async function writeTextFile(text) {
 export async function composeVideo({
   timeline,
   musicTrack,
-  watermarkPath,
+  eventName,
   titleText,
-  ctaText,
   outputPath,
   onProgress,
 }) {
   const width = config.render.width;
   const height = config.render.height;
 
-  const segments = timeline.map((item, index) => segmentFilter({ item, index, width, height }));
-  const durations = timeline.map((item) => item.duration);
+  // Replace the final segment with the generated branded end card. If
+  // rsvg-convert isn't available, fall back to the originally-selected closing
+  // shot so a render still succeeds (just without the designed card).
+  let endCardPath = null;
+  let comp = timeline;
+  try {
+    endCardPath = await generateEndCard({ eventName, width, height });
+    const lastIdx = timeline.length - 1;
+    comp = timeline.map((it, i) => (i === lastIdx ? { ...it, kind: "card", storedPath: endCardPath, trimStart: null } : it));
+  } catch {
+    comp = timeline;
+  }
+
+  const segments = comp.map((item, index) => segmentFilter({ item, index, width, height }));
+  const durations = comp.map((item) => item.duration);
   const { filters: xfadeFilters, totalDuration } = xfadeChain(
     segments.map((s) => s.label),
     durations,
   );
 
   const titlePath = await writeTextFile(titleText);
-  const ctaPath = await writeTextFile(ctaText);
-  const ctaStart = Math.max(0, totalDuration - 3);
+  const musicInputIndex = comp.length; // music is the input after all media
 
-  const watermarkInputIndex = timeline.length; // added right after media inputs
-  const musicInputIndex = watermarkPath ? watermarkInputIndex + 1 : watermarkInputIndex;
-
+  // Opening title only (0-3s); the CTA now lives on the end card.
   const textFilters = [
     `[vmain]drawtext=textfile='${titlePath}':fontfile='${FONT_FILE}':fontsize=64:fontcolor=white:` +
-      `borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3)'[vtitle]`,
-    `[vtitle]drawtext=textfile='${ctaPath}':fontfile='${FONT_FILE}':fontsize=48:fontcolor=white:` +
-      `borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=h*0.8:line_spacing=10:` +
-      `enable='between(t,${ctaStart.toFixed(3)},${totalDuration.toFixed(3)})'[vcta]`,
+      `borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3)'[vout]`,
   ];
-
-  let videoOutLabel = "vcta";
-  const watermarkFilters = [];
-  if (watermarkPath) {
-    watermarkFilters.push(
-      `[${watermarkInputIndex}:v]scale=180:-1[wm]`,
-      `[vcta][wm]overlay=W-200:H-220:enable='between(t,0,${totalDuration.toFixed(3)})'[vwm]`,
-    );
-    videoOutLabel = "vwm";
-  }
 
   const audioFilter =
     `[${musicInputIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
     `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - 0.6).toFixed(3)}:d=0.6[aout]`;
 
-  const filterGraph = [
-    ...segments.map((s) => s.filter),
-    ...xfadeFilters,
-    ...textFilters,
-    ...watermarkFilters,
-    audioFilter,
-  ].join(";");
+  const filterGraph = [...segments.map((s) => s.filter), ...xfadeFilters, ...textFilters, audioFilter].join(";");
 
   const command = ffmpeg();
-
-  for (const item of timeline) {
-    if (item.kind === "photo") {
+  for (const item of comp) {
+    if (item.kind === "photo" || item.kind === "card") {
       command.input(item.storedPath).inputOptions(["-loop 1", "-r 30", `-t ${item.duration.toFixed(3)}`]);
     } else {
       command
@@ -131,18 +153,16 @@ export async function composeVideo({
         .inputOptions([`-ss ${(item.trimStart ?? 0).toFixed(3)}`, `-t ${item.duration.toFixed(3)}`]);
     }
   }
-  if (watermarkPath) command.input(watermarkPath);
   command.input(musicTrack.file_path);
 
   try {
     await new Promise((resolve, reject) => {
-      // NB: don't pass the output map as complexFilter's 2nd arg AND also add
-      // -map below — that double-maps and ffmpeg errors. We map explicitly via
-      // outputOptions, so complexFilter takes only the graph string.
+      // Map explicitly via outputOptions; don't also pass a map to
+      // complexFilter or ffmpeg double-maps and errors.
       command
         .complexFilter(filterGraph)
         .outputOptions([
-          "-map", `[${videoOutLabel}]`,
+          "-map", "[vout]",
           "-map", "[aout]",
           "-c:v", "libx264",
           "-preset", config.render.ffmpegPreset,
@@ -161,7 +181,10 @@ export async function composeVideo({
         .run();
     });
   } finally {
-    await Promise.all([unlink(titlePath).catch(() => {}), unlink(ctaPath).catch(() => {})]);
+    await Promise.all([
+      unlink(titlePath).catch(() => {}),
+      endCardPath ? unlink(endCardPath).catch(() => {}) : Promise.resolve(),
+    ]);
   }
 
   return { outputPath, totalDuration };
