@@ -7,60 +7,125 @@
 <style>
   :root { color-scheme: dark; }
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; background: #111; color: #eee; }
-  h1 { font-size: 1.4rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
   fieldset { border: 1px solid #444; border-radius: 8px; margin-bottom: 1rem; }
   label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.9rem; color: #bbb; }
   input, select { width: 100%; padding: 0.5rem; box-sizing: border-box; background: #1c1c1c; color: #eee; border: 1px solid #444; border-radius: 4px; }
   button { padding: 0.6rem 1.2rem; border: none; border-radius: 6px; background: #6d5dfc; color: white; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: #333; }
   progress { width: 100%; height: 1.2rem; }
   #status { margin-top: 1rem; font-size: 0.9rem; }
   video { width: 100%; border-radius: 8px; margin-top: 1rem; background: black; }
   .hidden { display: none; }
   .error { color: #ff6b6b; }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .tabs button { background: #222; }
+  .tabs button.active { background: #6d5dfc; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.75rem; }
+  th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #333; }
+  .muted { color: #888; font-size: 0.85rem; }
 </style>
 </head>
 <body>
   <h1>Festival Recap Generator</h1>
 
-  <fieldset id="step-project">
-    <legend>1. Event details</legend>
-    <label>Event name *<input id="eventName" required></label>
-    <label>Location<input id="location"></label>
-    <label>Date<input id="eventDate" type="date"></label>
-    <label>Music style
-      <select id="musicStyle">
-        <option value="auto">Auto (recommended)</option>
-        <option value="festival">Festival</option>
-        <option value="edm">EDM</option>
-        <option value="electronic">Electronic</option>
-        <option value="pop">Pop</option>
-        <option value="cinematic">Cinematic</option>
-      </select>
-    </label>
-    <button id="createProjectBtn">Create project</button>
-  </fieldset>
+  <div class="tabs">
+    <button id="tabRecapBtn" class="active">Recap</button>
+    <button id="tabMusicBtn">Music</button>
+  </div>
 
-  <fieldset id="step-upload" class="hidden">
-    <legend>2. Upload photos &amp; clips (min 3)</legend>
-    <label>Photos/videos (JPEG, PNG, WEBP, MP4, MOV)<input id="mediaFiles" type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime"></label>
-    <label>Logo/watermark (optional)<input id="watermarkFile" type="file" accept="image/*"></label>
-    <progress id="uploadProgress" value="0" max="100" class="hidden"></progress>
-    <button id="uploadBtn">Upload</button>
-  </fieldset>
+  <div id="tab-recap">
+    <fieldset id="step-project">
+      <legend>1. Event details</legend>
+      <label>Event name *<input id="eventName" required></label>
+      <label>Location<input id="location"></label>
+      <label>Date<input id="eventDate" type="date"></label>
+      <label>Music style
+        <select id="musicStyle">
+          <option value="auto">Auto (recommended)</option>
+          <option value="festival">Festival</option>
+          <option value="edm">EDM</option>
+          <option value="electronic">Electronic</option>
+          <option value="pop">Pop</option>
+          <option value="cinematic">Cinematic</option>
+        </select>
+      </label>
+      <button id="createProjectBtn">Create project</button>
+    </fieldset>
 
-  <fieldset id="step-render" class="hidden">
-    <legend>3. Generate recap</legend>
-    <button id="renderBtn">Generate 20s recap video</button>
-    <div id="status"></div>
-    <video id="preview" class="hidden" controls></video>
-    <a id="downloadLink" class="hidden" href="#">Download video</a>
-  </fieldset>
+    <fieldset id="step-upload" class="hidden">
+      <legend>2. Upload photos &amp; clips (min 3)</legend>
+      <label>Photos/videos (JPEG, PNG, WEBP, MP4, MOV)<input id="mediaFiles" type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime"></label>
+      <label>Logo/watermark (optional)<input id="watermarkFile" type="file" accept="image/*"></label>
+      <progress id="uploadProgress" value="0" max="100" class="hidden"></progress>
+      <button id="uploadBtn">Upload</button>
+    </fieldset>
+
+    <fieldset id="step-render" class="hidden">
+      <legend>3. Generate recap</legend>
+      <button id="renderBtn">Generate 20s recap video</button>
+      <div id="status"></div>
+      <video id="preview" class="hidden" controls></video>
+      <a id="downloadLink" class="hidden" href="#">Download video</a>
+    </fieldset>
+  </div>
+
+  <div id="tab-music" class="hidden">
+    <fieldset>
+      <legend>Add a track from a link</legend>
+      <p class="muted">Paste a Pixabay music track URL (pixabay.com/music/...). Only
+        Pixabay links can be auto-imported right now — the server scrapes the
+        title/artist/duration/license and downloads the mp3 itself.</p>
+      <label>Track URL<input id="musicUrl" placeholder="https://pixabay.com/music/..."></label>
+      <button id="previewBtn">Preview</button>
+      <div id="musicPreviewError" class="error"></div>
+
+      <div id="musicPreview" class="hidden">
+        <p><strong id="pvTitle"></strong> by <span id="pvArtist"></span> — <span id="pvDuration"></span>s</p>
+        <p class="muted" id="pvLicense"></p>
+        <label>Genre
+          <select id="pvGenre">
+            <option value="electronic">Electronic</option>
+            <option value="edm">EDM</option>
+            <option value="festival">Festival</option>
+            <option value="pop">Pop</option>
+            <option value="cinematic">Cinematic</option>
+          </select>
+        </label>
+        <label>BPM (not published anywhere — this is only a genre-typical
+          starting guess, please correct it once you can measure the real
+          tempo)<input id="pvBpm" type="number" min="40" max="240"></label>
+        <button id="importBtn">Download &amp; add track</button>
+      </div>
+      <div id="importStatus"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Library</legend>
+      <button id="refreshMusicBtn" class="secondary">Refresh</button>
+      <table id="musicTable">
+        <thead><tr><th>Title</th><th>Genre</th><th>BPM</th><th>Active</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </fieldset>
+  </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let projectId = null;
 let jobId = null;
+
+$('tabRecapBtn').addEventListener('click', () => switchTab('recap'));
+$('tabMusicBtn').addEventListener('click', () => switchTab('music'));
+
+function switchTab(name) {
+  $('tab-recap').classList.toggle('hidden', name !== 'recap');
+  $('tab-music').classList.toggle('hidden', name !== 'music');
+  $('tabRecapBtn').classList.toggle('active', name === 'recap');
+  $('tabMusicBtn').classList.toggle('active', name === 'music');
+  if (name === 'music') loadMusicLibrary();
+}
 
 $('createProjectBtn').addEventListener('click', async () => {
   const body = {
@@ -140,6 +205,67 @@ async function pollJob() {
     return;
   }
   setTimeout(pollJob, 3000);
+}
+
+// ---- Music tab ----
+let previewMeta = null;
+
+$('previewBtn').addEventListener('click', async () => {
+  const url = $('musicUrl').value.trim();
+  $('musicPreviewError').textContent = '';
+  $('musicPreview').classList.add('hidden');
+  if (!url) return;
+
+  const res = await fetch(`/api/music/preview?url=${encodeURIComponent(url)}`);
+  if (!res.ok) {
+    $('musicPreviewError').textContent = await res.text();
+    return;
+  }
+  previewMeta = await res.json();
+  $('pvTitle').textContent = previewMeta.title;
+  $('pvArtist').textContent = previewMeta.artist || 'unknown';
+  $('pvDuration').textContent = previewMeta.durationSeconds ?? '?';
+  $('pvLicense').textContent = `${previewMeta.license} — ${previewMeta.sourceUrl}`;
+  $('pvGenre').value = previewMeta.suggestedGenre;
+  $('pvBpm').value = previewMeta.suggestedBpm;
+  $('musicPreview').classList.remove('hidden');
+});
+
+$('importBtn').addEventListener('click', async () => {
+  $('importBtn').disabled = true;
+  $('importStatus').textContent = 'Downloading and saving…';
+  const res = await fetch('/api/music/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: $('musicUrl').value.trim(),
+      genre: $('pvGenre').value,
+      bpm: Number($('pvBpm').value),
+    }),
+  });
+  $('importBtn').disabled = false;
+  if (!res.ok) {
+    $('importStatus').innerHTML = `<span class="error">${await res.text()}</span>`;
+    return;
+  }
+  $('importStatus').textContent = 'Track added.';
+  $('musicPreview').classList.add('hidden');
+  $('musicUrl').value = '';
+  loadMusicLibrary();
+});
+
+$('refreshMusicBtn').addEventListener('click', loadMusicLibrary);
+
+async function loadMusicLibrary() {
+  const res = await fetch('/api/music/all');
+  const tracks = await res.json();
+  const tbody = document.querySelector('#musicTable tbody');
+  tbody.innerHTML = '';
+  for (const t of tracks) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${t.title}</td><td>${t.genre}</td><td>${t.bpm}</td><td>${t.active ? 'yes' : 'no'}</td>`;
+    tbody.appendChild(tr);
+  }
 }
 </script>
 </body>

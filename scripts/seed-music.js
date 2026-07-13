@@ -4,7 +4,8 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import pool, { query, queryOne } from "../src/db/pool.js";
+import pool from "../src/db/pool.js";
+import { upsertTrack, listAll } from "../src/repositories/musicTracks.js";
 import logger from "../src/utils/logger.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -12,30 +13,28 @@ const LIBRARY_PATH = join(ROOT, "music", "library.json");
 
 async function seed() {
   const tracks = JSON.parse(readFileSync(LIBRARY_PATH, "utf8"));
-  let inserted = 0;
-  let updated = 0;
+  const before = await listAll();
+  const beforeIds = new Set(before.map((t) => t.id));
+  let count = 0;
 
   for (const t of tracks) {
     if (t.title?.startsWith("REPLACE_ME")) continue; // skip the template entry
-    const existing = await queryOne("SELECT id FROM music_tracks WHERE file_path = ?", [t.file_path]);
-    if (existing) {
-      await query(
-        `UPDATE music_tracks SET title=?, artist=?, genre=?, bpm=?, duration_seconds=?,
-           license=?, source_url=?, active=1 WHERE id=?`,
-        [t.title, t.artist, t.genre, t.bpm, t.duration_seconds, t.license, t.source_url, existing.id],
-      );
-      updated++;
-    } else {
-      await query(
-        `INSERT INTO music_tracks (title, artist, genre, bpm, duration_seconds, file_path, license, source_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [t.title, t.artist, t.genre, t.bpm, t.duration_seconds, t.file_path, t.license, t.source_url],
-      );
-      inserted++;
-    }
+    await upsertTrack({
+      title: t.title,
+      artist: t.artist,
+      genre: t.genre,
+      bpm: t.bpm,
+      durationSeconds: t.duration_seconds,
+      filePath: t.file_path,
+      license: t.license,
+      sourceUrl: t.source_url,
+    });
+    count++;
   }
 
-  logger.info({ inserted, updated }, "music library seeded");
+  const after = await listAll();
+  const inserted = after.filter((t) => !beforeIds.has(t.id)).length;
+  logger.info({ processed: count, inserted, updated: count - inserted }, "music library seeded");
 }
 
 seed()

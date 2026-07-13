@@ -156,7 +156,11 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `POST` | `/api/projects/:id/render` | Enqueue a render job (requires ≥ 3 uploaded media items) |
 | `GET`  | `/api/jobs/:id` | Job status: `queued → analyzing → selecting → rendering → done/failed`, `progress_percent` |
 | `GET`  | `/api/jobs/:id/download` | Streams the finished MP4 |
-| `GET`  | `/api/music` | List the local royalty-free catalog (optionally `?genre=`) |
+| `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
+| `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
+| `GET`  | `/api/music/preview?url=` | Scrape a `pixabay.com/music/...` URL's metadata (title/artist/duration/license) without downloading anything |
+| `POST` | `/api/music/import` | Re-scrape the URL server-side, download the mp3 into `music/`, upsert the DB row — body: `{ url, genre, bpm }` |
+| `PATCH` | `/api/music/:id/active` | Toggle a track active/inactive — body: `{ active: bool }` |
 
 No auth layer in v1 — this is a single-operator tool behind the Pi's LAN-only
 Caddy site (`tls internal`, no public exposure). Add a shared upload token or
@@ -300,9 +304,10 @@ festival_recap/
     │   ├── frameExtract.js       # grabs a representative frame from video
     │   ├── mediaAnalysis.js      # orchestrates scoring → composite_score
     │   ├── selection.js          # builds the 20s timeline
-    │   └── videoComposer.js      # ffmpeg filter_complex graph + render
+    │   ├── videoComposer.js      # ffmpeg filter_complex graph + render
+    │   └── musicImport.js        # Pixabay JSON-LD scrape + mp3 download ("Music" tab)
     ├── queue/worker.js           # DB-polling render worker
-    └── utils/{secrets,logger,checksum}.js
+    └── utils/{secrets,logger,checksum,slugify}.js
 ```
 
 ---

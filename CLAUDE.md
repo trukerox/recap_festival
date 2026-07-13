@@ -42,7 +42,15 @@ database, own user, no cross-database access).
 - No Redis/BullMQ — render worker is an in-process DB-polling loop
   (`src/queue/worker.js`), `RENDER_CONCURRENCY=1` by default
 - Music: local curated library (`music/library.json` + audio files), no
-  external API call at render time
+  external API call at render time. Adding tracks: the "Music" tab lets you
+  paste a `pixabay.com/music/...` URL — server scrapes the page's JSON-LD
+  `AudioObject` block (title/artist/duration/direct mp3 URL), downloads the
+  file into `music/`, and upserts the DB row (`src/services/musicImport.js`,
+  `src/routes/music.js` preview/import endpoints). BPM is never published
+  anywhere (Pixabay or otherwise) — always a user-editable genre-typical
+  guess, confirmed before saving, never presented as measured. Only Pixabay
+  URLs are understood; other sources use the manual `library.json` +
+  `scripts/seed-music.js` path (see `music/README.md`).
 
 ## File conventions
 - DB migrations: `src/db/migrations/NNN_description.sql`
@@ -56,5 +64,10 @@ database, own user, no cross-database access).
   promising users a turnaround
 - Scoring weights in `src/services/mediaAnalysis.js` are initial estimates,
   not tuned against real festival photos/clips
-- `music/library.json` ships with a placeholder entry only — real
-  royalty-free tracks must be sourced and added before this can render anything
+- `music/library.json` ships with a placeholder entry only — use the Music
+  tab (Pixabay URL import) or the manual path to add real tracks before this
+  can render anything
+- Pixabay scraping (`src/services/musicImport.js`) is untested from the Pi's
+  actual network — Pixabay may apply bot protection that blocks server-side
+  requests even with browser-like headers; if `GET /api/music/preview`
+  errors out, fall back to the manual `library.json` path

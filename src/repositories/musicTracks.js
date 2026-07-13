@@ -11,6 +11,36 @@ export async function getById(id) {
   return queryOne("SELECT * FROM music_tracks WHERE id = ?", [id]);
 }
 
+export async function listAll() {
+  return query("SELECT * FROM music_tracks ORDER BY created_at DESC");
+}
+
+// Used by both scripts/seed-music.js (bulk, from music/library.json) and the
+// "add by URL" API route (one at a time) — upserts by file_path so re-adding
+// the same track updates it instead of duplicating.
+export async function upsertTrack(t) {
+  const existing = await queryOne("SELECT id FROM music_tracks WHERE file_path = ?", [t.filePath]);
+  if (existing) {
+    await query(
+      `UPDATE music_tracks SET title=?, artist=?, genre=?, bpm=?, duration_seconds=?,
+         license=?, source_url=?, active=1 WHERE id=?`,
+      [t.title, t.artist, t.genre, t.bpm, t.durationSeconds, t.license, t.sourceUrl, existing.id],
+    );
+    return getById(existing.id);
+  }
+  const result = await query(
+    `INSERT INTO music_tracks (title, artist, genre, bpm, duration_seconds, file_path, license, source_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [t.title, t.artist, t.genre, t.bpm, t.durationSeconds, t.filePath, t.license, t.sourceUrl],
+  );
+  return getById(result.insertId);
+}
+
+export async function setActive(id, active) {
+  await query("UPDATE music_tracks SET active = ? WHERE id = ?", [active ? 1 : 0, id]);
+  return getById(id);
+}
+
 // "auto" (or an unrecognised style) picks any active track — the festival/edm
 // tracks are weighted first since they best match the brief's default mood.
 export async function pickForStyle(style) {
