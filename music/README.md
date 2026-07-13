@@ -17,12 +17,27 @@ dependency/rate-limit to the render path and keeps licensing unambiguous
 2. Drop the audio files into this `music/` folder (mp3, ideally ≥ 20s long —
    the composer trims to the render's total duration).
 3. Add one entry per track to `library.json` (title, artist, genre, **bpm**,
-   duration_seconds, file_path relative to this folder, license, source_url).
+   duration_seconds, `file_path` **relative to the repo root** — e.g.
+   `"music/my_track.mp3"`, not just `"my_track.mp3"` — license, source_url).
    The BPM matters — it's what the beat-synced cut timing in
    `src/services/selection.js` snaps to.
 4. Run `node scripts/seed-music.js` to load `library.json` into the
    `music_tracks` table (idempotent — re-running updates existing rows by
    `file_path`, doesn't duplicate them).
+
+## On the Pi
+
+This folder is **bind-mounted, not baked into the image** (see
+`docker-compose.yml`) — the container always reads whatever is at
+`~/docker/festival_recap/music/` on the host. So on the Pi:
+
+1. Copy mp3 files directly into `~/docker/festival_recap/music/` (FileZilla/scp
+   — they're gitignored, `git pull` will never bring them in).
+2. Edit `~/docker/festival_recap/music/library.json` directly (it IS
+   git-tracked, so either edit it on the Pi with `nano`, or edit it on Windows
+   and `git push`/`git pull` it over — just don't let the two drift out of sync).
+3. `docker compose exec -T festival_recap node scripts/seed-music.js` —
+   no rebuild needed, just a re-seed. Repeat any time you add/remove tracks.
 
 ## Licensing
 

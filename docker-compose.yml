@@ -50,6 +50,12 @@ services:
       # rebuilds; uploads/renders should be included in backups, tmp can be
       # excluded (regenerated per job).
       - /mnt/storage/festival_recap/data:/app/data
+      # Bind-mounted (not baked into the image) so adding/removing tracks only
+      # needs a container restart + re-seed, not a rebuild. Lives in the repo
+      # checkout itself (~/docker/festival_recap/music), NOT /mnt/storage —
+      # library.json is git-tracked, the mp3s themselves are gitignored and
+      # must be copied onto the Pi directly (see music/README.md).
+      - ./music:/app/music:ro
     networks:
       - web
     healthcheck:

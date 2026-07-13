@@ -17,11 +17,12 @@ RUN apt-get update \
 COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
-# App source
+# App source. `music/` is NOT copied here — it's bind-mounted at runtime
+# (see docker-compose.yml) so adding tracks doesn't need an image rebuild.
 COPY src ./src
 COPY scripts ./scripts
 COPY public ./public
-COPY music ./music
+RUN mkdir -p /app/music && chown node:node /app/music
 
 # Runtime data dir (mounted as a volume in compose; created for local runs too).
 RUN mkdir -p /app/data/uploads /app/data/renders /app/data/tmp \
