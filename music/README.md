@@ -16,10 +16,21 @@ after that the two are independent and only the `/mnt/storage` copy matters.
 Open the **Music** tab in the web UI, paste a `pixabay.com/music/...` track
 URL, click **Preview**. The server scrapes the title/artist/duration/license
 from Pixabay's page metadata and shows an editable form — confirm/adjust the
-**genre** and **BPM** (neither is published anywhere, so these are always a
-starting guess, never scraped fact) and click **Download & add track**. The
-server downloads the mp3 straight into `music/` and adds the DB row itself —
-no FileZilla, no manual JSON editing.
+**genre** (not reliably scrapeable) and click **Download & add track**. With
+"Auto-detect BPM" checked (the default), the server downloads the mp3 and
+estimates the real tempo from the audio itself (ffmpeg lowpass filter +
+energy-envelope autocorrelation — see `src/services/bpmDetect.js`) instead of
+guessing from genre. No BPM is ever *scraped* from Pixabay or anywhere
+else — it isn't published anywhere — but this **is** a measurement of the
+actual downloaded track, not a guess, once auto-detect runs.
+
+That said, simple autocorrelation-based detectors have one well-known,
+unavoidable failure mode: they can lock onto a harmonic and report half or
+double the true tempo (e.g. 70 vs 140). The import result shows a confidence
+percentage, and the library table's BPM column is click-to-edit if a value
+sounds wrong once you hear the render.
+
+No FileZilla, no manual JSON editing needed for this path.
 
 Only `pixabay.com/music/...` links are understood right now (see
 `src/services/musicImport.js`). Anything else falls back to the manual path
@@ -28,7 +39,9 @@ changes), you'll get a clear error from the Preview step and should also fall
 back to the manual path.
 
 Implementation: `src/services/musicImport.js` (scrape + download),
-`src/routes/music.js` (`GET /api/music/preview`, `POST /api/music/import`).
+`src/services/bpmDetect.js` (tempo estimation), `src/routes/music.js`
+(`GET /api/music/preview`, `POST /api/music/import`, `PATCH /api/music/:id`
+to correct bpm/genre afterwards).
 
 ## Adding tracks — manual / bulk path
 

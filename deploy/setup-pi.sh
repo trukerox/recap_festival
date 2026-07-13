@@ -158,7 +158,7 @@ info "(see music/README.md for both paths)"
 
 echo -e "\n${BOLD}4) Add the Caddy site block${NC} (you wire Caddy yourself):"
 info "Append the block in $REPO_DIR/caddy/festival_recap.caddy to your Pi Caddyfile,"
-info "then: docker exec caddy caddy reload --config /etc/caddy/Caddyfile"
+info "then: docker exec caddy-prod caddy reload --config /etc/caddy/Caddyfile"
 
 echo -e "\n${BOLD}5) Build + start the stack:${NC}"
 info "bash $REPO_DIR/deploy/update-pi.sh"

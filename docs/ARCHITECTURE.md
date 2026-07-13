@@ -159,8 +159,9 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
 | `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
 | `GET`  | `/api/music/preview?url=` | Scrape a `pixabay.com/music/...` URL's metadata (title/artist/duration/license) without downloading anything |
-| `POST` | `/api/music/import` | Re-scrape the URL server-side, download the mp3 into `music/`, upsert the DB row — body: `{ url, genre, bpm }` |
+| `POST` | `/api/music/import` | Re-scrape the URL server-side, download the mp3, auto-detect BPM from the audio (or use the supplied one), upsert the DB row — body: `{ url, genre, bpm? }` |
 | `PATCH` | `/api/music/:id/active` | Toggle a track active/inactive — body: `{ active: bool }` |
+| `PATCH` | `/api/music/:id` | Correct a track's `bpm`/`genre` after the fact (e.g. auto-detection was off by an octave) |
 
 No auth layer in v1 — this is a single-operator tool behind the Pi's LAN-only
 Caddy site (`tls internal`, no public exposure). Add a shared upload token or
@@ -232,6 +233,39 @@ Implemented in [src/services/selection.js](../src/services/selection.js):
   ambient festival audio is rarely worth preserving over a proper track),
   trimmed to the render length with a short fade in/out.
 - **Output**: `libx264` / `aac`, `-movflags +faststart`, 1080x1920 @ 30fps.
+
+### Music library & BPM detection ([src/services/musicImport.js](../src/services/musicImport.js), [src/services/bpmDetect.js](../src/services/bpmDetect.js))
+
+Adding a track (via the Music tab, `GET /api/music/preview` → `POST
+/api/music/import`) scrapes Pixabay's per-track schema.org `AudioObject`
+JSON-LD block for title/artist/duration/license and a direct CDN mp3 URL,
+downloads the file into `/mnt/storage/festival_recap/music`, then **auto-detects
+BPM from the actual downloaded audio** rather than asking for an external API
+or a manual measurement:
+
+1. ffmpeg low-passes the track (`lowpass=f=150`) to isolate bass/kick energy
+   — the clearest beat signal for the EDM/festival/dubstep genres this tool
+   targets — decoded to mono PCM at 11025Hz, a ~30s middle chunk only (skips
+   the intro).
+2. A short-time energy envelope (10ms windows) is autocorrelated over the
+   60-200 BPM lag range; the strongest periodicity wins.
+3. The normalised autocorrelation peak doubles as a rough confidence score,
+   returned (not persisted) alongside the created track so the UI can show
+   e.g. "128 BPM — confidence 74%".
+
+This is a standard, well-established lightweight beat-detection technique —
+no ML model, no new native dependency, fits the same CPU-only philosophy as
+the media quality scoring in §5. **Known, unavoidable limitation**: naive
+autocorrelation can lock onto a harmonic of the true tempo (reporting half or
+double, e.g. 70 vs 140) — genuinely common with this class of detector, not
+a bug to fix. The result is always editable: `PATCH /api/music/:id` corrects
+`bpm`/`genre` after the fact, exposed in the Music tab as a click-to-edit
+BPM cell in the library table.
+
+No BPM source (Pixabay's page, or any other metadata site) publishes real
+BPM, so before a file is downloaded (the `/preview` step) only a
+genre-typical default is available — real detection can only happen after
+the audio exists on disk, i.e. during `/import`.
 
 ---
 
@@ -305,7 +339,8 @@ festival_recap/
     │   ├── mediaAnalysis.js      # orchestrates scoring → composite_score
     │   ├── selection.js          # builds the 20s timeline
     │   ├── videoComposer.js      # ffmpeg filter_complex graph + render
-    │   └── musicImport.js        # Pixabay JSON-LD scrape + mp3 download ("Music" tab)
+    │   ├── musicImport.js        # Pixabay JSON-LD scrape + mp3 download ("Music" tab)
+    │   └── bpmDetect.js          # ffmpeg lowpass + autocorrelation BPM estimate
     ├── queue/worker.js           # DB-polling render worker
     └── utils/{secrets,logger,checksum,slugify}.js
 ```

@@ -93,9 +93,18 @@
             <option value="cinematic">Cinematic</option>
           </select>
         </label>
-        <label>BPM (not published anywhere — this is only a genre-typical
-          starting guess, please correct it once you can measure the real
-          tempo)<input id="pvBpm" type="number" min="40" max="240"></label>
+        <label style="display:flex; align-items:center; gap:0.4rem;">
+          <input type="checkbox" id="pvAutoDetect" checked style="width:auto;">
+          Auto-detect BPM from the audio after download (recommended)
+        </label>
+        <label>BPM
+          <input id="pvBpm" type="number" min="40" max="240" disabled>
+        </label>
+        <p class="muted">Auto-detection analyzes the actual track (ffmpeg +
+          energy autocorrelation) once it's downloaded — more accurate than a
+          genre guess, but simple detectors like this can occasionally read
+          half/double the true tempo. Always check it sounds right; the
+          library table below lets you click a BPM to correct it.</p>
         <button id="importBtn">Download &amp; add track</button>
       </div>
       <div id="importStatus"></div>
@@ -228,19 +237,28 @@ $('previewBtn').addEventListener('click', async () => {
   $('pvLicense').textContent = `${previewMeta.license} — ${previewMeta.sourceUrl}`;
   $('pvGenre').value = previewMeta.suggestedGenre;
   $('pvBpm').value = previewMeta.suggestedBpm;
+  $('pvAutoDetect').checked = true;
+  $('pvBpm').disabled = true;
   $('musicPreview').classList.remove('hidden');
+});
+
+$('pvAutoDetect').addEventListener('change', () => {
+  $('pvBpm').disabled = $('pvAutoDetect').checked;
 });
 
 $('importBtn').addEventListener('click', async () => {
   $('importBtn').disabled = true;
-  $('importStatus').textContent = 'Downloading and saving…';
+  $('importStatus').textContent = $('pvAutoDetect').checked
+    ? 'Downloading and analyzing tempo…'
+    : 'Downloading and saving…';
+  const autoDetect = $('pvAutoDetect').checked;
   const res = await fetch('/api/music/import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: $('musicUrl').value.trim(),
       genre: $('pvGenre').value,
-      bpm: Number($('pvBpm').value),
+      ...(autoDetect ? {} : { bpm: Number($('pvBpm').value) }),
     }),
   });
   $('importBtn').disabled = false;
@@ -248,7 +266,10 @@ $('importBtn').addEventListener('click', async () => {
     $('importStatus').innerHTML = `<span class="error">${await res.text()}</span>`;
     return;
   }
-  $('importStatus').textContent = 'Track added.';
+  const track = await res.json();
+  const conf = track.bpmConfidence != null ? ` (confidence ${Math.round(track.bpmConfidence * 100)}%)` : '';
+  const sourceLabel = { detected: 'auto-detected', manual: 'manual', 'genre-default': 'genre default (detection failed)' }[track.bpmSource] || '';
+  $('importStatus').textContent = `Track added: ${track.bpm} BPM${conf ? ' — ' + sourceLabel + conf : ''}. Click its BPM in the table below to correct it if it sounds wrong.`;
   $('musicPreview').classList.add('hidden');
   $('musicUrl').value = '';
   loadMusicLibrary();
@@ -263,7 +284,25 @@ async function loadMusicLibrary() {
   tbody.innerHTML = '';
   for (const t of tracks) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${t.title}</td><td>${t.genre}</td><td>${t.bpm}</td><td>${t.active ? 'yes' : 'no'}</td>`;
+    const bpmCell = document.createElement('td');
+    bpmCell.textContent = t.bpm;
+    bpmCell.style.cursor = 'pointer';
+    bpmCell.style.textDecoration = 'underline dotted';
+    bpmCell.title = 'Click to correct this BPM';
+    bpmCell.addEventListener('click', async () => {
+      const next = prompt(`Correct BPM for "${t.title}" (currently ${t.bpm}):`, t.bpm);
+      if (!next || Number.isNaN(Number(next))) return;
+      const patchRes = await fetch(`/api/music/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bpm: Number(next) }),
+      });
+      if (patchRes.ok) loadMusicLibrary();
+      else alert('Failed to update: ' + (await patchRes.text()));
+    });
+    tr.innerHTML = `<td>${t.title}</td><td>${t.genre}</td>`;
+    tr.appendChild(bpmCell);
+    tr.insertAdjacentHTML('beforeend', `<td>${t.active ? 'yes' : 'no'}</td>`);
     tbody.appendChild(tr);
   }
 }

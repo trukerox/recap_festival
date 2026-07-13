@@ -4,7 +4,7 @@
 # Add this block to the Pi Caddyfile:
 #   pulled_repos/docker/pi/caddy/Caddyfile  (deployed to ~/docker/caddy/Caddyfile)
 # then reload Caddy:
-#   docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+#   docker exec caddy-prod caddy reload --config /etc/caddy/Caddyfile
 #
 # Matches the existing homeserver convention: `tls internal`, shared security
 # headers snippet, real-IP forwarding over the `web` network.

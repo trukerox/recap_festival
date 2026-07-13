@@ -43,15 +43,19 @@ database, own user, no cross-database access).
   no GPU, see `docs/ARCHITECTURE.md` §5 for the cloud-API upgrade path
 - No Redis/BullMQ — render worker is an in-process DB-polling loop
   (`src/queue/worker.js`), `RENDER_CONCURRENCY=1` by default
-- Music: local curated library (`music/library.json` + audio files), no
-  external API call at render time. Adding tracks: the "Music" tab lets you
-  paste a `pixabay.com/music/...` URL — server scrapes the page's JSON-LD
-  `AudioObject` block (title/artist/duration/direct mp3 URL), downloads the
-  file into `music/`, and upserts the DB row (`src/services/musicImport.js`,
-  `src/routes/music.js` preview/import endpoints). BPM is never published
-  anywhere (Pixabay or otherwise) — always a user-editable genre-typical
-  guess, confirmed before saving, never presented as measured. Only Pixabay
-  URLs are understood; other sources use the manual `library.json` +
+- Music: local curated library at `/mnt/storage/festival_recap/music`
+  (library.json + audio files), no external API call at render time. Adding
+  tracks: the "Music" tab lets you paste a `pixabay.com/music/...` URL —
+  server scrapes the page's JSON-LD `AudioObject` block
+  (title/artist/duration/direct mp3 URL), downloads the file, and upserts the
+  DB row (`src/services/musicImport.js`, `src/routes/music.js`
+  preview/import endpoints). BPM is never *published* anywhere (Pixabay or
+  otherwise), but IS auto-detected from the downloaded audio itself (ffmpeg
+  lowpass + energy-envelope autocorrelation, `src/services/bpmDetect.js`) —
+  a real measurement, not a guess, though simple autocorrelation can lock
+  onto a harmonic (report half/double the true tempo); always shown with a
+  confidence % and correctable via `PATCH /api/music/:id`. Only Pixabay URLs
+  are understood; other sources use the manual `library.json` +
   `scripts/seed-music.js` path (see `music/README.md`).
 
 ## File conventions
@@ -73,3 +77,8 @@ database, own user, no cross-database access).
   actual network — Pixabay may apply bot protection that blocks server-side
   requests even with browser-like headers; if `GET /api/music/preview`
   errors out, fall back to the manual `library.json` path
+- BPM auto-detection (`src/services/bpmDetect.js`) is untested against real
+  downloaded tracks — verify the first few imports sound right at the
+  reported BPM before trusting it unattended; correct via `PATCH /api/music/:id`
+  if the confidence is low or the render's cuts feel off-beat (likely octave
+  error — the detector reported half/double the true tempo)

@@ -41,6 +41,19 @@ export async function setActive(id, active) {
   return getById(id);
 }
 
+// Partial update for correcting an auto-detected BPM or a misjudged genre
+// after the fact — both are best-effort guesses, never presented as certain.
+export async function updateFields(id, { bpm, genre } = {}) {
+  const fields = [];
+  const params = [];
+  if (bpm != null) { fields.push("bpm = ?"); params.push(bpm); }
+  if (genre != null) { fields.push("genre = ?"); params.push(genre); }
+  if (fields.length === 0) return getById(id);
+  params.push(id);
+  await query(`UPDATE music_tracks SET ${fields.join(", ")} WHERE id = ?`, params);
+  return getById(id);
+}
+
 // "auto" (or an unrecognised style) picks any active track — the festival/edm
 // tracks are weighted first since they best match the brief's default mood.
 export async function pickForStyle(style) {
