@@ -59,35 +59,6 @@ const ENTRANCE_MOVE = {
   slideD:   { dz: 0.02,  dx: 0,   dy: -80, pf: 10 }, // push down
 };
 
-// A no-adjacent-duplicate cycle; a random rotation per render keeps successive
-// renders fresh too. Slides are softened to punch/pullback on real video (a
-// directional slide of already-moving footage reads muddy).
-const ENTRANCE_CYCLE = ["punch", "slideL", "pullback", "slideR", "punch", "slideU", "pullback", "slideD"];
-
-// Assign one entrance per timeline segment. Only the energetic (hard-cut)
-// styles get moves; the opening (under the title) and non-photo/video kinds
-// stay still. Videos never slide — they get punch/pullback instead.
-function assignEntrances(comp, hardCuts) {
-  const start = Math.floor(Math.random() * ENTRANCE_CYCLE.length);
-  const out = [];
-  let p = 0;
-  for (const it of comp) {
-    const isMain = it.kind === "photo" || it.kind === "video";
-    if (!hardCuts || !isMain || it.role === "opening" || it.kind === "card") {
-      out.push("none");
-      continue;
-    }
-    // Move on alternate cuts only — the rest are calm static holds (just the
-    // gentle slow zoom), so the reel isn't in constant motion.
-    if (p % 2 === 1) { out.push("none"); p++; continue; }
-    let move = ENTRANCE_CYCLE[(start + p) % ENTRANCE_CYCLE.length];
-    if (it.kind === "video" && move.startsWith("slide")) move = "punch"; // slides read muddy on moving footage
-    out.push(move);
-    p++;
-  }
-  return out;
-}
-
 // signed multiplier term, e.g. (0.1, "d") -> "+0.1*d", (-0.08, "d") -> "-0.08*d".
 // Avoids emitting "+-x", which ffmpeg's expression parser dislikes.
 function term(value, expr) {
@@ -215,19 +186,55 @@ function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
   };
 }
 
-function xfadeChain(segmentLabels, durations, transitions, transitionDuration) {
+// Per-style transition vocabulary. Most beats get a near-instant `cutDur` fade
+// (reads as a hard cut so the beat still hits); every `every`-th boundary gets a
+// real effect from `effects` (whip slides, circle/radial zoom, dissolve). All
+// names are xfade transitions available since ffmpeg 4.3.
+const TRANSITION_SETS = {
+  beatcut:   { effects: ["slideleft", "slideright", "smoothleft", "smoothright"],           effectDur: 0.16, cutDur: 0.05, every: 2 },
+  punchy:    { effects: ["slideleft", "slideright", "smoothup", "circleopen"],              effectDur: 0.18, cutDur: 0.05, every: 2 },
+  dynamic:   { effects: ["slideup", "slidedown", "radial", "circleopen", "smoothright"],    effectDur: 0.22, cutDur: 0.05, every: 2 },
+  clean:     { effects: ["dissolve", "fade", "smoothright"],                                effectDur: 0.30, cutDur: 0.06, every: 3 },
+  cinematic: { effects: ["fade", "fadeblack", "dissolve"],                                  effectDur: 0.50, cutDur: 0.50, every: 1 },
+};
+const DEFAULT_TRANSITION = { effects: ["fade", "dissolve"], effectDur: 0.3, cutDur: 0.06, every: 2 };
+
+// Build the per-boundary plan ([{ type, dur }] of length n). The boundary INTO
+// the end card always gets a clean dip-to-black so the branded card lands well.
+function buildTransitionPlan(n, style, cardIndex) {
+  const t = TRANSITION_SETS[style.name] || DEFAULT_TRANSITION;
+  const effects = t.effects.length ? t.effects : ["fade"];
+  const start = Math.floor(Math.random() * effects.length);
+  const plan = [];
+  let e = 0;
+  for (let i = 0; i < n; i++) {
+    if (i + 1 === cardIndex) { plan.push({ type: "fadeblack", dur: Math.max(0.3, t.effectDur) }); continue; }
+    if (t.every >= 1 && i % t.every === 0) {
+      plan.push({ type: effects[(start + e) % effects.length], dur: t.effectDur });
+      e++;
+    } else {
+      plan.push({ type: "fade", dur: t.cutDur });
+    }
+  }
+  return plan;
+}
+
+// Chains segments with xfade using a per-boundary plan. Padding (done by the
+// caller) makes each transition RESOLVE exactly on its beat, so the edit stays
+// beat-locked and the total is preserved.
+function xfadeChain(segmentLabels, durations, plan) {
   const filters = [];
   let cumulative = durations[0];
   let prevLabel = segmentLabels[0];
 
   for (let i = 1; i < segmentLabels.length; i++) {
     const outLabel = i === segmentLabels.length - 1 ? "vmain" : `x${i}`;
-    const transition = transitions[(i - 1) % transitions.length];
-    const offset = Math.max(0, cumulative - transitionDuration);
+    const { type, dur } = plan[i - 1];
+    const offset = Math.max(0, cumulative - dur);
     filters.push(
-      `[${prevLabel}][${segmentLabels[i]}]xfade=transition=${transition}:duration=${transitionDuration}:offset=${offset.toFixed(3)}[${outLabel}]`,
+      `[${prevLabel}][${segmentLabels[i]}]xfade=transition=${type}:duration=${dur.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`,
     );
-    cumulative += durations[i] - transitionDuration;
+    cumulative += durations[i] - dur;
     prevLabel = outLabel;
   }
   return { filters, totalDuration: cumulative };
@@ -263,7 +270,6 @@ export async function composeVideo({
   const width = config.render.width;
   const height = config.render.height;
   const style = styleArg || getStyle(null);
-  const td = style.transitionDuration;
 
   // Replace the final segment with the generated branded end card. If
   // rsvg-convert isn't available, fall back to the originally-selected closing
@@ -281,23 +287,20 @@ export async function composeVideo({
     logger.warn({ err: err.message }, "end card generation failed — falling back to closing shot (is librsvg2-bin installed? try --force-rebuild)");
   }
 
-  const hardCuts = Boolean(style.hardCuts) || td <= 0;
-
-  // xfade overlaps each cut by `td`, which would otherwise make the output
-  // (n-1)*td shorter than target AND slide every cut off the beat grid — so
-  // pad every segment after the first by one transition length. Hard-cut
-  // styles concat instead: no overlap, no padding, cuts land exactly where
-  // selection.js put them (on the beat).
-  if (!hardCuts) {
-    comp = comp.map((it, i) => {
-      if (i === 0) return it;
-      const padded = { ...it, duration: it.duration + td };
-      for (const k of ["a", "b", "c"]) {
-        if (it[k]) padded[k] = { ...it[k], duration: it[k].duration + td };
-      }
-      return padded;
-    });
-  }
+  // Build the per-boundary transition plan, then pad each segment (after the
+  // first) by its INCOMING transition length. xfade steals `dur` from each
+  // boundary, so this padding both preserves the 30s total AND makes every
+  // transition resolve exactly on its beat (cuts stay beat-locked).
+  const plan = buildTransitionPlan(comp.length - 1, style, comp.length - 1);
+  comp = comp.map((it, i) => {
+    if (i === 0) return it;
+    const d = plan[i - 1].dur;
+    const padded = { ...it, duration: it.duration + d };
+    for (const k of ["a", "b", "c"]) {
+      if (it[k]) padded[k] = { ...it[k], duration: it[k].duration + d };
+    }
+    return padded;
+  });
 
   // Assign ffmpeg input indices (split moments consume 2-3 inputs).
   let inputIdx = 0;
@@ -312,26 +315,17 @@ export async function composeVideo({
   }
   const musicInputIndex = inputIdx;
 
-  // Varied per-cut entrance moves on the hard-cut (energetic) styles so no two
-  // cuts feel the same; the smooth cinematic style keeps its calm eased drift.
-  const entrances = assignEntrances(comp, hardCuts);
+  // Real xfade transitions now carry the between-clip energy, so clips stay calm
+  // (gentle Ken Burns only) — the old per-cut zoom/slide moves ON TOP of the
+  // transitions read as "too much motion". Keep them off.
   const segments = comp.map((item, index) =>
-    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, entrance: entrances[index] }),
+    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, entrance: "none" }),
   );
   const durations = comp.map((item) => item.duration);
 
-  let joinFilters;
-  let totalDuration;
-  if (hardCuts) {
-    // Instant beat-synced cuts: plain concat of the normalized segments.
-    const labels = segments.map((s) => `[${s.label}]`).join("");
-    joinFilters = [`${labels}concat=n=${segments.length}:v=1:a=0[vmain]`];
-    totalDuration = durations.reduce((s, d) => s + d, 0);
-  } else {
-    const chain = xfadeChain(segments.map((s) => s.label), durations, style.transitions, td);
-    joinFilters = chain.filters;
-    totalDuration = chain.totalDuration;
-  }
+  const chain = xfadeChain(segments.map((s) => s.label), durations, plan);
+  const joinFilters = chain.filters;
+  const totalDuration = chain.totalDuration;
 
   // Canva-style title block over the opening shot: huge bold "FESTIVAL RECAP",
   // with the event name + location beneath it.
