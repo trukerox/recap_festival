@@ -4,6 +4,7 @@ import { unlink } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { httpError } from "../middleware/errorHandler.js";
 import { getJob, listJobsWithProject, deleteJob } from "../repositories/renderJobs.js";
+import { makeContactSheet } from "../services/contactSheet.js";
 
 export const jobsRouter = Router();
 
@@ -36,6 +37,24 @@ jobsRouter.get("/:id/video", async (req, res, next) => {
       throw httpError(409, `Job is not finished yet (status: ${job.status})`);
     }
     res.sendFile(resolve(process.cwd(), job.output_path), (err) => {
+      if (err && !res.headersSent) next(err);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Keyframe contact sheet (a single tiled JPG) for at-a-glance review.
+jobsRouter.get("/:id/frames", async (req, res, next) => {
+  try {
+    const job = await getJob(req.params.id);
+    if (!job) throw httpError(404, "Job not found");
+    if (job.status !== "done" || !job.output_path) {
+      throw httpError(409, `Job is not finished yet (status: ${job.status})`);
+    }
+    const sheet = await makeContactSheet(resolve(process.cwd(), job.output_path));
+    res.sendFile(sheet, (err) => {
+      unlink(sheet).catch(() => {});
       if (err && !res.headersSent) next(err);
     });
   } catch (err) {

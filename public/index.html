@@ -29,6 +29,7 @@
   .vcard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .vcard-actions { display: flex; gap: 8px; flex-shrink: 0; }
   .vplayer { width: 100%; max-width: 260px; border-radius: 6px; margin-top: 10px; background: black; display: block; }
+  .sheet { width: 100%; max-width: 640px; border-radius: 6px; margin-top: 10px; display: block; }
   .badge { font-size: 0.7rem; background: #6d5dfc; color: white; padding: 1px 7px; border-radius: 10px; vertical-align: middle; }
   .btnlink { font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; background: #333; color: #eee; text-decoration: none; }
 </style>
@@ -425,7 +426,7 @@ function fmtBytes(n) {
   return mb >= 1 ? mb.toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
 }
 
-function videoCard({ title, sub, src, downloadHref, onDelete, badge }) {
+function videoCard({ title, sub, src, sheet, downloadHref, onDelete, badge }) {
   const card = document.createElement('div');
   card.className = 'vcard';
   const head = document.createElement('div');
@@ -449,6 +450,11 @@ function videoCard({ title, sub, src, downloadHref, onDelete, badge }) {
     v.controls = true; v.preload = 'metadata'; v.src = src; v.className = 'vplayer';
     card.appendChild(v);
   }
+  if (sheet) {
+    const img = document.createElement('img');
+    img.loading = 'lazy'; img.src = sheet; img.className = 'sheet'; img.alt = 'keyframes';
+    card.appendChild(img);
+  }
   return card;
 }
 
@@ -466,6 +472,7 @@ async function loadRenders() {
         title: j.event_name || `Recap #${j.id}`,
         sub: when,
         src: `/api/jobs/${j.id}/video`,
+        sheet: `/api/jobs/${j.id}/frames`,
         downloadHref: `/api/jobs/${j.id}/download`,
         onDelete: async () => {
           if (!confirm('Delete this recap video?')) return;
