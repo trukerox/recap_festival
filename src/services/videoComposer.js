@@ -269,8 +269,11 @@ export async function composeVideo({
     endCardPath = await generateEndCard({ eventName, width, height });
     const last = comp[comp.length - 1];
     comp[comp.length - 1] = { ...last, kind: "card", storedPath: endCardPath, trimStart: null };
-  } catch {
-    // keep the photo closing shot
+  } catch (err) {
+    // Keep the photo closing shot, but make the failure visible — a missing
+    // branded card almost always means rsvg-convert/librsvg2-bin isn't in the
+    // image (needs `update-pi.sh --force-rebuild`).
+    logger.warn({ err: err.message }, "end card generation failed — falling back to closing shot (is librsvg2-bin installed? try --force-rebuild)");
   }
 
   const hardCuts = Boolean(style.hardCuts) || td <= 0;

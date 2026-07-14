@@ -91,6 +91,10 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   const { beats, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure } = opts;
   const useHook = Boolean(structure?.hook);
   const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook });
+  // A copy of the full highlight pool to REUSE if we run out of fresh shots
+  // before the end-card window — otherwise the closing shot freezes for the
+  // remaining seconds (the "stuck" bug). Reusing shots keeps the edit cutting.
+  const recyclePool = queue.slice();
 
   const usableEnd = totalDurationSeconds - MIN_ENDCARD_SECONDS;
   // Beat times inside the content window, ascending.
@@ -125,12 +129,22 @@ function buildBeatTimeline(scoredMediaRows, opts) {
     split3Left--;
   }
 
-  // Middle: advance beat-by-beat, cutting on real beats. Close-ups are held
-  // for more beats (hero); 2-up split moments drop in at spaced slots.
+  // Middle: keep cutting on real beats until the end-card window. Close-ups are
+  // held for more beats (hero); 2-up split moments drop in at spaced slots. If
+  // we run out of fresh shots before the end, RECYCLE the pool (reuse shots)
+  // rather than freezing the closing shot for the remaining seconds.
   let splitsLeft = Math.max(0, splitMoments);
   const splitSlots = new Set(splitMoments > 0 ? [2, 6, 10] : []);
   let slot = 0;
-  while (queue.length > 0) {
+  let lastId = null;
+  while (idx < B.length) {
+    if (queue.length === 0) {
+      if (recyclePool.length === 0) break; // nothing at all to show — bail
+      const refill = recyclePool.slice();
+      // avoid an immediate repeat of the last shot across the seam
+      if (refill.length > 1 && refill[0].id === lastId) refill.push(refill.shift());
+      queue.push(...refill);
+    }
     if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
       const next = idx + normalAdvance;
       if (next >= B.length || B[next] > usableEnd) break;
@@ -143,6 +157,7 @@ function buildBeatTimeline(scoredMediaRows, opts) {
       const next = idx + advance;
       if (next >= B.length || B[next] > usableEnd) break;
       seq.push(toTimelineItem(queue.shift(), "highlight", B[next] - B[idx]));
+      lastId = row.id;
       idx = next;
     }
     slot++;
@@ -175,6 +190,7 @@ function buildGridTimeline(scoredMediaRows, opts) {
     return n * beat;
   };
   const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook: false });
+  const recyclePool = queue.slice(); // reuse shots if we run short (see beat path)
 
   const slice = snap(targetSlice);
   const heroSlice = snap(Math.min(MAX_HERO_SECONDS, targetSlice * Math.max(1, heroHold)), MAX_HERO_SECONDS);
@@ -182,7 +198,11 @@ function buildGridTimeline(scoredMediaRows, opts) {
   const middle = [];
   let spent = 0, slot = 0, splitsLeft = Math.max(0, splitMoments);
   const splitSlots = new Set(splitMoments > 0 ? [2, 6, 10] : []);
-  while (queue.length > 0) {
+  while (spent < budget - 0.001) {
+    if (queue.length === 0) {
+      if (recyclePool.length === 0) break;
+      queue.push(...recyclePool.slice());
+    }
     if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2 && spent + slice <= budget) {
       middle.push(toSplitItem(queue.shift(), queue.shift(), slice));
       spent += slice; splitsLeft--;
