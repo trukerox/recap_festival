@@ -37,7 +37,37 @@ function panelFilter(sub, inputIndex, width, height, eq, outLabel) {
   );
 }
 
-function segmentFilter({ item, index, width, height, grade, panPx }) {
+// Head-punch length: extra zoom decays over this many frames at the cut.
+const PUNCH_FRAMES = 5;
+
+// Eased Ken Burns via zoompan (idea adapted from image-motion's eased camera +
+// the beat-punch technique common to Shorts editors):
+//   * a slow zoom-in across the slice (slowZoom, fraction of baseZoom)
+//   * smooth, BOUNDED horizontal drift using smoothstep, not a linear sweep
+//     (linear full-width pans read "dizzy" — user complaint) — magnitude panPx
+//   * an optional short "punch": extra zoom that decays over the first
+//     PUNCH_FRAMES frames, so each HARD CUT visibly lands ON the beat.
+// Pre-scaling the source to `scaleUp` kills the classic zoompan pixel jitter
+// and leaves room to pan/zoom without exposing black edges (EXIF-safe: cover
+// scale always fills, whatever the rotation).
+function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, slowZoom, punch, panPx, dir, extra = "", label }) {
+  const canW = Math.round(width * scaleUp);
+  const canH = Math.round(height * scaleUp);
+  const prog = `(on/${frames})`;
+  const ease = `(${prog}*${prog}*(3-2*${prog}))`; // smoothstep 0->1
+  const punchTerm = punch > 0 ? `+${punch}*max(0,(${PUNCH_FRAMES}-on))/${PUNCH_FRAMES}` : "";
+  const z = `${baseZoom}+${slowZoom}*${prog}${punchTerm}`;
+  const x = panPx ? `(iw-iw/zoom)/2+${(dir * panPx).toFixed(2)}*(${ease}-0.5)` : "(iw-iw/zoom)/2";
+  const y = "(ih-ih/zoom)/2";
+  return (
+    `[${inputIndex}:v]${extra}scale=${canW}:${canH}:force_original_aspect_ratio=increase,` +
+    `crop=${canW}:${canH},${eq},` +
+    `zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${width}x${height}:fps=30,` +
+    `${NORM}[${label}]`
+  );
+}
+
+function segmentFilter({ item, index, width, height, grade, panPx, punch }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
   const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
@@ -88,31 +118,41 @@ function segmentFilter({ item, index, width, height, grade, panPx }) {
     };
   }
 
-  // Photo: gentle Ken Burns drift, Canva-style — the shot stays essentially
-  // still and the CUTS carry the energy. The crop window starts centered and
-  // drifts at most `panPx` pixels over the whole slice (clipped to the image so
-  // it can never overrun, whatever the orientation/EXIF rotation).
+  // Photo: eased Ken Burns — a slow zoom-in + smooth bounded drift so the shot
+  // feels intentional and alive (not the old mechanical linear sweep), with a
+  // short punch-zoom on hard cuts so the cut lands ON the beat.
   if (item.kind === "photo") {
-    const coverW = Math.round(width * 1.08);
-    const coverH = Math.round(height * 1.08);
     const dir = index % 2 === 0 ? 1 : -1;
-    const xExpr = `clip((in_w-${width})/2 + ${dir * panPx}*(n/${frames}-0.5), 0, in_w-${width})`;
     return {
       label,
-      filter:
-        `[${item.inputIndex}:v]scale=${coverW}:${coverH}:force_original_aspect_ratio=increase,${eq},` +
-        `crop=${width}:${height}:x='${xExpr}':y='(in_h-${height})/2',` +
-        `${NORM}[${label}]`,
+      filter: kenBurns({
+        inputIndex: item.inputIndex, frames, width, height, eq,
+        scaleUp: 1.2, baseZoom: 1.2, slowZoom: 0.06,
+        punch: punch ? 0.06 : 0, panPx, dir, label,
+      }),
     };
   }
 
-  // Video clip: cover-crop to fill + colour lift.
+  // Video clip: cover-crop to fill + colour lift. When there's no camera move
+  // to apply (no punch), keep the cheap plain cover-crop; otherwise route
+  // through zoompan for a subtle beat-punch on the cut.
+  const trim = `trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,`;
+  if (!punch) {
+    return {
+      label,
+      filter:
+        `[${item.inputIndex}:v]${trim}` +
+        `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
+        `${eq},${NORM}[${label}]`,
+    };
+  }
   return {
     label,
-    filter:
-      `[${item.inputIndex}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
-      `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
-      `${eq},${NORM}[${label}]`,
+    filter: kenBurns({
+      inputIndex: item.inputIndex, frames, width, height, eq,
+      scaleUp: 1.12, baseZoom: 1.12, slowZoom: 0,
+      punch: 0.05, panPx: 0, dir: 0, extra: trim, label,
+    }),
   };
 }
 
@@ -210,8 +250,10 @@ export async function composeVideo({
   }
   const musicInputIndex = inputIdx;
 
+  // Beat-punch only on the hard-cut (energetic) styles — the smooth cinematic
+  // style keeps its calm eased drift with no punch.
   const segments = comp.map((item, index) =>
-    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50 }),
+    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, punch: hardCuts }),
   );
   const durations = comp.map((item) => item.duration);
 
