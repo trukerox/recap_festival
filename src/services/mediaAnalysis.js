@@ -8,6 +8,7 @@ import { analyzeImageQuality } from "./imageQuality.js";
 import { analyzeVideoFrames } from "./videoQuality.js";
 import { extractFrame } from "./frameExtract.js";
 import { countFaces } from "./faceDetect.js";
+import { tagImage } from "./geminiVision.js";
 import { upsertScore } from "../repositories/mediaScores.js";
 
 const CLIP_WINDOW_SECONDS = 3;
@@ -42,24 +43,39 @@ function compositeOf({ sharpness, brightness, contrast, crowdScore, motionScore,
   );
 }
 
+// Blend Gemini's vision rating (if available) into a heuristic result: it knows
+// a striking "hero" moment from a dull one far better than sharpness/faces do,
+// so it dominates the composite score and overrides the coarse shot_type.
+function applyGemini(result, gem) {
+  if (!gem) return result;
+  if (gem.shotType) result.shotType = gem.shotType;
+  const gScore = 0.6 * gem.hero + 0.4 * gem.quality;
+  result.compositeScore = 0.3 * (result.compositeScore ?? 0) + 0.7 * gScore;
+  return result;
+}
+
 async function analyzePhoto(mediaItem) {
-  const [{ sharpness, brightness, contrast }, face] = await Promise.all([
+  const [{ sharpness, brightness, contrast }, face, gem] = await Promise.all([
     analyzeImageQuality(mediaItem.stored_path),
     countFaces(mediaItem.stored_path),
+    tagImage(mediaItem.stored_path).catch(() => null),
   ]);
   const crowdScore = crowdScoreFrom(face.faceCount);
-  return {
-    sharpness,
-    brightness,
-    contrast,
-    faceCount: face.faceCount,
-    crowdScore,
-    motionScore: null,
-    shotType: shotTypeFrom(face.faceCount, face.avgFaceAreaRatio),
-    compositeScore: compositeOf({ sharpness, brightness, contrast, crowdScore, motionScore: 0, hasMotion: false }),
-    trimStartSeconds: null,
-    trimEndSeconds: null,
-  };
+  return applyGemini(
+    {
+      sharpness,
+      brightness,
+      contrast,
+      faceCount: face.faceCount,
+      crowdScore,
+      motionScore: null,
+      shotType: shotTypeFrom(face.faceCount, face.avgFaceAreaRatio),
+      compositeScore: compositeOf({ sharpness, brightness, contrast, crowdScore, motionScore: 0, hasMotion: false }),
+      trimStartSeconds: null,
+      trimEndSeconds: null,
+    },
+    gem,
+  );
 }
 
 async function analyzeVideo(mediaItem) {
@@ -68,9 +84,11 @@ async function analyzeVideo(mediaItem) {
 
   let framePath;
   let face = { faceCount: 0, avgFaceAreaRatio: 0 };
+  let gem = null;
   try {
     framePath = await extractFrame(mediaItem.stored_path, stats.peakMotionTime || duration / 2);
-    face = await countFaces(framePath);
+    // Tag the peak-motion frame — represents the clip's best moment.
+    [face, gem] = await Promise.all([countFaces(framePath), tagImage(framePath).catch(() => null)]);
   } finally {
     if (framePath) await unlink(framePath).catch(() => {});
   }
@@ -80,18 +98,21 @@ async function analyzeVideo(mediaItem) {
   const center = stats.peakMotionTime || duration / 2;
   const trimStart = Math.max(0, Math.min(center - windowLen / 2, Math.max(0, duration - windowLen)));
 
-  return {
-    sharpness: stats.sharpness,
-    brightness: stats.brightness,
-    contrast: stats.contrast,
-    faceCount: face.faceCount,
-    crowdScore,
-    motionScore: stats.motionScore,
-    shotType: shotTypeFrom(face.faceCount, face.avgFaceAreaRatio),
-    compositeScore: compositeOf({ ...stats, crowdScore, hasMotion: true }),
-    trimStartSeconds: trimStart,
-    trimEndSeconds: trimStart + windowLen,
-  };
+  return applyGemini(
+    {
+      sharpness: stats.sharpness,
+      brightness: stats.brightness,
+      contrast: stats.contrast,
+      faceCount: face.faceCount,
+      crowdScore,
+      motionScore: stats.motionScore,
+      shotType: shotTypeFrom(face.faceCount, face.avgFaceAreaRatio),
+      compositeScore: compositeOf({ ...stats, crowdScore, hasMotion: true }),
+      trimStartSeconds: trimStart,
+      trimEndSeconds: trimStart + windowLen,
+    },
+    gem,
+  );
 }
 
 export async function analyzeMediaItem(mediaItem) {

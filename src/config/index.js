@@ -53,6 +53,14 @@ export const config = {
   },
 
   retentionDays: int(process.env.RETENTION_DAYS, 14),
+
+  ai: {
+    // Optional Gemini vision for smarter shot selection (Phase 2). With no key
+    // the pipeline falls back to the local heuristic scorer — no behaviour
+    // change. Key via Docker secret `gemini_api_key` (preferred) or env.
+    geminiKey: readSecret("gemini_api_key", { required: false }) || process.env.GEMINI_API_KEY || null,
+    geminiModel: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+  },
 };
 
 export default config;
