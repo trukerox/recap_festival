@@ -9,6 +9,10 @@
 // fade, fadeblack, fadewhite, dissolve, wipe*, slide*, smooth*, circleopen/close.
 
 export const STYLES = [
+  // panPx: MAX crop-window drift in pixels over a whole slice. Kept small on
+  // purpose — the Canva reference edits hold shots nearly still and let the
+  // CUTS carry the energy. A full-width sweep (the old behaviour) reads as
+  // dizzying, especially with alternating directions.
   {
     name: "punchy",
     label: "Punchy / Trend",
@@ -19,6 +23,7 @@ export const STYLES = [
     closeupBias: 1.35,
     musicGenre: "edm",
     titleFontSize: 74,
+    panPx: 25, // near-still: the fast cuts ARE the motion
   },
   {
     name: "cinematic",
@@ -30,6 +35,7 @@ export const STYLES = [
     closeupBias: 1.1,
     musicGenre: "cinematic",
     titleFontSize: 62,
+    panPx: 70, // slow, barely-perceptible drift
   },
   {
     name: "dynamic",
@@ -41,6 +47,7 @@ export const STYLES = [
     closeupBias: 1.2,
     musicGenre: "electronic",
     titleFontSize: 68,
+    panPx: 90, // the most motion of any style — still gentle
   },
   {
     name: "clean",
@@ -52,6 +59,7 @@ export const STYLES = [
     closeupBias: 1.0,
     musicGenre: "festival",
     titleFontSize: 60,
+    panPx: 45,
   },
 ];
 

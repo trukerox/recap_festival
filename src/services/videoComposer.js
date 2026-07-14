@@ -20,7 +20,7 @@ const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 // card PNG is RGBA, video is YUV), frame rate, SAR, and timebase.
 const NORM = "format=yuv420p,fps=30,setsar=1,settb=AVTB";
 
-function segmentFilter({ item, index, width, height, grade }) {
+function segmentFilter({ item, index, width, height, grade, panPx }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
   const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
@@ -37,18 +37,22 @@ function segmentFilter({ item, index, width, height, grade }) {
     };
   }
 
-  // Photo: Ken Burns pan. Cover-scale slightly larger than the frame (so the
-  // crop input is always >= the frame and there's pan room on both axes), then
-  // slide a 1080x1920 crop window. Adapts to any orientation / EXIF rotation.
+  // Photo: gentle Ken Burns drift, Canva-style — the shot stays essentially
+  // still and the CUTS carry the energy. The crop window starts centered and
+  // drifts at most `panPx` pixels over the whole slice (clipped to the image so
+  // it can never overrun, whatever the orientation/EXIF rotation). The old
+  // full-width sweep panned thousands of pixels per second and read as dizzy.
   if (item.kind === "photo") {
-    const coverW = Math.round(width * 1.12);
-    const coverH = Math.round(height * 1.12);
-    const p = index % 2 === 0 ? `n/${frames}` : `(1-n/${frames})`;
+    const coverW = Math.round(width * 1.08);
+    const coverH = Math.round(height * 1.08);
+    const dir = index % 2 === 0 ? 1 : -1;
+    // progress runs -0.5 → +0.5 across the slice; offset = dir * progress * panPx
+    const xExpr = `clip((in_w-${width})/2 + ${dir * panPx}*(n/${frames}-0.5), 0, in_w-${width})`;
     return {
       label,
       filter:
         `[${index}:v]scale=${coverW}:${coverH}:force_original_aspect_ratio=increase,${eq},` +
-        `crop=${width}:${height}:x='(in_w-${width})*${p}':y='(in_h-${height})*${p}',` +
+        `crop=${width}:${height}:x='${xExpr}':y='(in_h-${height})/2',` +
         `${NORM}[${label}]`,
     };
   }
@@ -119,7 +123,9 @@ export async function composeVideo({
   // than target; adding it back makes the render hit its full nominal length.
   comp = comp.map((it, i) => (i === 0 ? it : { ...it, duration: it.duration + td }));
 
-  const segments = comp.map((item, index) => segmentFilter({ item, index, width, height, grade: style.grade }));
+  const segments = comp.map((item, index) =>
+    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50 }),
+  );
   const durations = comp.map((item) => item.duration);
   const { filters: xfadeFilters, totalDuration } = xfadeChain(
     segments.map((s) => s.label),
