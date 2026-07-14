@@ -62,7 +62,21 @@ function toSplit3Item(rowTop, rowMiddle, rowBottom, duration) {
 // Rank media, apply the style's close-up bias, and split into an interleaved
 // wide/close/other play queue + the opening & closing picks. Shared by both
 // the beat-driven and grid builders.
-function prepare(scoredMediaRows, { closeupBias, useHook }) {
+function prepare(scoredMediaRows, { closeupBias, useHook, directorOrder }) {
+  // Gemini director path: use its culled, ordered plan directly (opener → middle
+  // → closer). Falls through to the heuristic below if the plan is unusable.
+  if (Array.isArray(directorOrder) && directorOrder.length >= 3) {
+    const byId = new Map(scoredMediaRows.map((r) => [r.id, r]));
+    const picked = directorOrder.map((o) => ({ row: byId.get(o.id), role: o.role })).filter((x) => x.row);
+    if (picked.length >= 3) {
+      const opening = (picked.find((x) => x.role === "opener") ?? picked[0]).row;
+      const closing = (picked.find((x) => x.role === "closer" && x.row.id !== opening.id) ?? picked[picked.length - 1]).row;
+      const used = new Set([opening.id, closing.id]);
+      const queue = picked.filter((x) => !used.has(x.row.id)).map((x) => x.row);
+      return { opening, closing, queue };
+    }
+  }
+
   const scoreOf = (r) => (r.composite_score ?? 0) * (r.shot_type === "close" ? closeupBias : 1);
   const ranked = [...scoredMediaRows].sort((a, b) => scoreOf(b) - scoreOf(a));
   if (ranked.length < 3) throw new Error("Need at least 3 scored media items to build a timeline");
@@ -90,7 +104,7 @@ function prepare(scoredMediaRows, { closeupBias, useHook }) {
 function buildBeatTimeline(scoredMediaRows, opts) {
   const { beats, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure } = opts;
   const useHook = Boolean(structure?.hook);
-  const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook });
+  const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook, directorOrder: opts.directorOrder });
   // A copy of the full highlight pool to REUSE if we run out of fresh shots
   // before the end-card window — otherwise the closing shot freezes for the
   // remaining seconds (the "stuck" bug). Reusing shots keeps the edit cutting.
@@ -198,7 +212,7 @@ function buildGridTimeline(scoredMediaRows, opts) {
     while (n > 1 && n * beat > max) n--;
     return n * beat;
   };
-  const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook: false });
+  const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook: false, directorOrder: opts.directorOrder });
   const recyclePool = queue.slice(); // reuse shots if we run short (see beat path)
 
   const slice = snap(targetSlice);
@@ -243,9 +257,10 @@ export function buildTimeline(
     heroHold = 1,
     splitMoments = 0,
     structure = null,
+    directorOrder = null,
   },
 ) {
-  const opts = { beats, bpm, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure };
+  const opts = { beats, bpm, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure, directorOrder };
   if (Array.isArray(beats) && beats.length >= 8) {
     const beatTimeline = buildBeatTimeline(scoredMediaRows, opts);
     if (beatTimeline && beatTimeline.length >= 3) return beatTimeline;

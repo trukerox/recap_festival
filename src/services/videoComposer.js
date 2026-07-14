@@ -285,6 +285,7 @@ export async function composeVideo({
   style: styleArg,
   eventName,
   titleSubText,
+  hook,
   outputPath,
   onProgress,
 }) {
@@ -363,7 +364,9 @@ export async function composeVideo({
   // fading back out — instead of the old hard pop on/off.
   // (Vignette PARKED with the grade — re-enable by prefixing the first drawtext
   //  input with `vignette=angle=PI/4.5,`.)
-  const mainPath = await writeTextFile("FESTIVAL RECAP");
+  // The director's hook (e.g. "BEST NIGHT EVER") becomes the bold opening line
+  // when present; otherwise the generic "FESTIVAL RECAP".
+  const mainPath = await writeTextFile((hook || "FESTIVAL RECAP").toUpperCase());
   const subPath = await writeTextFile(titleSubText || eventName || "");
   const subY = `h*0.09+${style.titleMainSize + 34}`;
   const tEnd = TITLE_SECONDS;       // when the title is fully gone

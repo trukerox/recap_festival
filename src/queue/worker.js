@@ -12,11 +12,38 @@ import { listByProject } from "../repositories/mediaItems.js";
 import { getScore, listScoresForProject, markSelection } from "../repositories/mediaScores.js";
 import { claimNextQueuedJob, updateStatus, markProgress, markDone, markFailed } from "../repositories/renderJobs.js";
 import { getById as getMusicTrack } from "../repositories/musicTracks.js";
+import { unlink } from "node:fs/promises";
 import { detectBeats } from "../services/bpmDetect.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
+import { extractFrame } from "../services/frameExtract.js";
+import { directEdit } from "../services/geminiDirector.js";
 import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
 import { getStyle } from "../services/styles.js";
+
+// Gemini director: cull + order the shots (opener → build → closer) and get a
+// hook line. Best-effort — returns null (heuristic order) on any failure.
+async function runDirector(scoredRows) {
+  const cleanup = [];
+  try {
+    const shots = [];
+    for (const r of scoredRows) {
+      let framePath = r.stored_path;
+      if (r.kind === "video") {
+        framePath = await extractFrame(r.stored_path, Number(r.trim_start_seconds ?? 0) + 0.5).catch(() => null);
+        if (!framePath) continue;
+        cleanup.push(framePath);
+      }
+      shots.push({ id: r.id, framePath, kind: r.kind });
+    }
+    return await directEdit(shots, { durationSeconds: config.render.durationSeconds });
+  } catch (err) {
+    logger.warn({ err: err.message }, "director failed — using heuristic order");
+    return null;
+  } finally {
+    for (const f of cleanup) await unlink(f).catch(() => {});
+  }
+}
 
 // "HH:MM:SS.xx" -> seconds (null if unparseable).
 function timemarkToSeconds(mark) {
@@ -66,7 +93,14 @@ async function processJob(job) {
   // Detect the ACTUAL beat timestamps in the chosen track so cuts land on the
   // real kicks (not a fixed grid). Falls back to the BPM grid if aubio can't.
   const { beats } = await detectBeats(musicTrack.file_path);
-  logger.info({ jobId: job.id, style: style.name, beatsDetected: beats.length }, "render style");
+
+  // Let Gemini direct WHICH shots and in WHAT ORDER (opener → build → closer);
+  // beats still decide the cut timing. Null → heuristic order (no regression).
+  const directorPlan = await runDirector(scoredRows);
+  logger.info(
+    { jobId: job.id, style: style.name, beatsDetected: beats.length, director: Boolean(directorPlan) },
+    "render style",
+  );
 
   const timeline = buildTimeline(scoredRows, {
     beats,
@@ -77,6 +111,7 @@ async function processJob(job) {
     heroHold: style.heroHold,
     splitMoments: style.splitMoments,
     structure: style.structure ?? null,
+    directorOrder: directorPlan?.order ?? null,
   });
   // Split-screen entries carry 2-3 media items — record all in the selection.
   const selected = timeline.flatMap((t) =>
@@ -95,6 +130,7 @@ async function processJob(job) {
     style,
     eventName: project.event_name,
     titleSubText: buildTitleSub(project),
+    hook: directorPlan?.hook ?? null,
     outputPath,
     onProgress: (p) => {
       // Estimate from output time processed (timemark "HH:MM:SS.xx"), which

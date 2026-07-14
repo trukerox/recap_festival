@@ -80,32 +80,23 @@ async function resolveCandidates() {
   }
 }
 
-// Returns { shotType, hero, quality, subject } or null (no key / any failure —
-// caller falls back to heuristics, so tagging is always best-effort).
-export async function tagImage(imagePath) {
+// Core call: run a JSON-output generateContent request with the given content
+// `parts`, trying candidate models until one returns 200 (skipping 404
+// tombstones) and caching the winner. Returns parsed JSON, or null. Shared by
+// per-image tagging and the director.
+export async function generateJson(parts, schema, { timeoutMs = 30_000 } = {}) {
   if (!config.ai.geminiKey) return null;
-
-  let b64;
-  try {
-    b64 = (await readFile(imagePath)).toString("base64");
-  } catch {
-    return null;
-  }
-  const mime = MIME_BY_EXT[extname(imagePath).toLowerCase()] || "image/jpeg";
   const body = {
-    contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mime, data: b64 } }] }],
-    generationConfig: { temperature: 0.2, response_mime_type: "application/json", response_schema: RESPONSE_SCHEMA },
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.3, response_mime_type: "application/json", response_schema: schema },
   };
-
-  // Once a model is confirmed working, only use that one; otherwise try the
-  // ordered candidates and skip any that 404 (tombstones), caching the winner.
   const models = workingModel ? [workingModel] : await resolveCandidates();
   if (!models.length) return null;
 
   for (const model of models) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.ai.geminiKey}`;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25_000);
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -120,34 +111,48 @@ export async function tagImage(imagePath) {
       }
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
-        logger.warn({ status: res.status, model, body: errBody.slice(0, 300) }, "gemini tag request failed");
+        logger.warn({ status: res.status, model, body: errBody.slice(0, 300) }, "gemini request failed");
         return null; // a non-404 error won't be fixed by another model
       }
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (!text) return null;
-      const parsed = JSON.parse(text);
       if (workingModel !== model) {
         workingModel = model;
         logger.info({ model }, "gemini model working — using for the rest of this run");
       }
-      const st = parsed.shot_type;
-      return {
-        shotType: st === "close" || st === "wide" || st === "detail" ? st : null,
-        hero: Number.isFinite(parsed.hero) ? clamp01(parsed.hero) : 0.5,
-        quality: Number.isFinite(parsed.quality) ? clamp01(parsed.quality) : 0.5,
-        subject: typeof parsed.subject === "string" ? parsed.subject.slice(0, 60) : null,
-      };
+      return JSON.parse(text);
     } catch (err) {
-      logger.warn({ err: err.message, model }, "gemini tag error");
+      logger.warn({ err: err.message, model }, "gemini request error");
       return null;
     } finally {
       clearTimeout(timer);
     }
   }
 
-  // Every candidate 404'd — disable tagging for the rest of the process.
-  logger.warn("no usable gemini model — AI tagging disabled (heuristics only)");
+  logger.warn("no usable gemini model — AI disabled (heuristics only)");
   candidateModels = [];
   return null;
+}
+
+// Per-image tag (kept as a fallback / utility). Returns { shotType, hero,
+// quality, subject } or null.
+export async function tagImage(imagePath) {
+  if (!config.ai.geminiKey) return null;
+  let b64;
+  try {
+    b64 = (await readFile(imagePath)).toString("base64");
+  } catch {
+    return null;
+  }
+  const mime = MIME_BY_EXT[extname(imagePath).toLowerCase()] || "image/jpeg";
+  const parsed = await generateJson([{ text: PROMPT }, { inline_data: { mime_type: mime, data: b64 } }], RESPONSE_SCHEMA);
+  if (!parsed) return null;
+  const st = parsed.shot_type;
+  return {
+    shotType: st === "close" || st === "wide" || st === "detail" ? st : null,
+    hero: Number.isFinite(parsed.hero) ? clamp01(parsed.hero) : 0.5,
+    quality: Number.isFinite(parsed.quality) ? clamp01(parsed.quality) : 0.5,
+    subject: typeof parsed.subject === "string" ? parsed.subject.slice(0, 60) : null,
+  };
 }
