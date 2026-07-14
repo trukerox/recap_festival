@@ -93,14 +93,8 @@
       <label>Audio file (mp3/wav/m4a/aac/ogg/flac)<input id="upFile" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"></label>
       <label>Title *<input id="upTitle" placeholder="Heavy Dubstep Bass Drop EDM"></label>
       <label>Artist<input id="upArtist" placeholder="alex-morgan"></label>
-      <label>Genre
-        <select id="upGenre">
-          <option value="festival">Festival</option>
-          <option value="edm">EDM</option>
-          <option value="electronic">Electronic</option>
-          <option value="pop">Pop</option>
-          <option value="cinematic">Cinematic</option>
-        </select>
+      <label>Genre (type anything — e.g. reggae, hip-hop, latin — not just the 5 style vibes)
+        <input id="upGenre" list="genreSuggestions" value="festival" placeholder="festival">
       </label>
       <label>Source URL (for your licensing record)<input id="upSource" placeholder="https://pixabay.com/music/..."></label>
       <label>License<input id="upLicense" value="Pixabay Content License"></label>
@@ -125,15 +119,8 @@
         <em>festival_recap track grabber</em> extension installed and permitted
         (see the <code>extension/</code> folder).</p>
       <label>Track URL<input id="grabUrl" placeholder="https://pixabay.com/music/..."></label>
-      <label>Genre
-        <select id="grabGenre">
-          <option value="auto">Auto (guess from title)</option>
-          <option value="festival">Festival</option>
-          <option value="edm">EDM</option>
-          <option value="electronic">Electronic</option>
-          <option value="pop">Pop</option>
-          <option value="cinematic">Cinematic</option>
-        </select>
+      <label>Genre (leave blank to guess from the title; type anything)
+        <input id="grabGenre" list="genreSuggestions" placeholder="auto — guess from title">
       </label>
       <button id="grabBtn">Download via extension</button>
       <div id="grabStatus"></div>
@@ -148,6 +135,19 @@
       </table>
     </fieldset>
   </div>
+
+  <datalist id="genreSuggestions">
+    <option value="festival"></option>
+    <option value="edm"></option>
+    <option value="electronic"></option>
+    <option value="pop"></option>
+    <option value="cinematic"></option>
+    <option value="reggae"></option>
+    <option value="hip-hop"></option>
+    <option value="latin"></option>
+    <option value="rock"></option>
+    <option value="ambient"></option>
+  </datalist>
 
   <div id="tab-videos" class="hidden">
     <fieldset>
@@ -341,7 +341,7 @@ $('grabBtn').addEventListener('click', () => {
   }
   $('grabBtn').disabled = true;
   $('grabStatus').textContent = 'Asking the extension to grab it (opens Pixabay in the background)…';
-  const genre = $('grabGenre').value === 'auto' ? undefined : $('grabGenre').value;
+  const genre = $('grabGenre').value.trim() || undefined; // blank = let the server guess from the title
   window.postMessage({ source: 'festivalrecap-app', type: 'grab', url, genre }, '*');
   grabTimeout = setTimeout(() => {
     $('grabBtn').disabled = false;
@@ -377,6 +377,20 @@ async function loadMusicLibrary() {
     titleTd.textContent = t.title;
     const genreTd = document.createElement('td');
     genreTd.textContent = t.genre;
+    genreTd.style.cursor = 'pointer';
+    genreTd.style.textDecoration = 'underline dotted';
+    genreTd.title = 'Click to correct this genre (type anything, e.g. reggae)';
+    genreTd.addEventListener('click', async () => {
+      const next = prompt(`Correct genre for "${t.title}" (currently ${t.genre}):`, t.genre);
+      if (!next || !next.trim()) return;
+      const patchRes = await fetch(`/api/music/${t.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ genre: next.trim() }),
+      });
+      if (patchRes.ok) loadMusicLibrary();
+      else alert('Failed to update: ' + (await patchRes.text()));
+    });
 
     const bpmTd = document.createElement('td');
     bpmTd.textContent = t.bpm;

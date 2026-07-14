@@ -121,7 +121,8 @@ addBtn.addEventListener("click", async () => {
     }
     const blob = await audioRes.blob();
 
-    const genre = genreSel.value === "auto" ? guessGenre(meta.title) : genreSel.value;
+    const typed = genreSel.value.trim();
+    const genre = typed || guessGenre(meta.title); // blank = guess from title; otherwise free text (e.g. "reggae")
 
     const form = new FormData();
     form.append("audio", blob, filenameFrom(meta.contentUrl, meta.title));

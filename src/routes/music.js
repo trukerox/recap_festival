@@ -26,10 +26,21 @@ musicRouter.get("/all", async (_req, res, next) => {
   }
 });
 
+// Genre is free text (not a fixed enum) — a track's actual genre (reggae,
+// hip-hop, latin, ...) shouldn't have to be shoehorned into the 5 style-vibe
+// buckets. Only used to bias style/track matching (musicTracks.pickForStyle);
+// anything unmatched still gets picked via that function's random fallback.
+const genreSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .transform((s) => s.toLowerCase());
+
 const uploadSchema = z.object({
   title: z.string().min(1).max(255),
   artist: z.string().max(255).optional(),
-  genre: z.enum(["electronic", "edm", "festival", "pop", "cinematic"]),
+  genre: genreSchema,
   license: z.string().max(64).optional(),
   sourceUrl: z.string().url().max(512).optional(),
   bpm: z.coerce.number().int().min(40).max(240).optional(),
@@ -122,7 +133,7 @@ musicRouter.delete("/:id", async (req, res, next) => {
 
 const updateSchema = z.object({
   bpm: z.number().int().min(40).max(240).optional(),
-  genre: z.enum(["electronic", "edm", "festival", "pop", "cinematic"]).optional(),
+  genre: genreSchema.optional(),
 });
 
 // Corrects an auto-detected BPM or a misjudged genre after the fact.

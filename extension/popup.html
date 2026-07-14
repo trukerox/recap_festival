@@ -6,7 +6,7 @@
     body { font: 13px system-ui, sans-serif; width: 300px; margin: 0; padding: 12px; }
     h1 { font-size: 14px; margin: 0 0 8px; }
     label { display: block; margin: 8px 0 4px; color: #555; }
-    select { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
+    select, input { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
     button { margin-top: 12px; width: 100%; padding: 9px; font: inherit; cursor: pointer;
              background: #6d5dfc; color: #fff; border: 0; border-radius: 4px; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -20,15 +20,20 @@
   <p class="hint">Open a Pixabay music track page, then click below. The track
     is downloaded in your browser (which passes Pixabay's bot check) and sent to
     festival_recap, where its BPM is auto-detected.</p>
-  <label for="genre">Genre</label>
-  <select id="genre">
-    <option value="auto">Auto (guess from title)</option>
-    <option value="festival">Festival</option>
-    <option value="edm">EDM</option>
-    <option value="electronic">Electronic</option>
-    <option value="pop">Pop</option>
-    <option value="cinematic">Cinematic</option>
-  </select>
+  <label for="genre">Genre (blank = guess from title; type anything, e.g. reggae)</label>
+  <input id="genre" list="genreSuggestions" placeholder="auto — guess from title">
+  <datalist id="genreSuggestions">
+    <option value="festival"></option>
+    <option value="edm"></option>
+    <option value="electronic"></option>
+    <option value="pop"></option>
+    <option value="cinematic"></option>
+    <option value="reggae"></option>
+    <option value="hip-hop"></option>
+    <option value="latin"></option>
+    <option value="rock"></option>
+    <option value="ambient"></option>
+  </datalist>
   <button id="add">Add current track</button>
   <p id="status"></p>
   <p class="hint">BPM detection can occasionally read half/double the true
