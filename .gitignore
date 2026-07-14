@@ -7,3 +7,4 @@ data/
 music/*.mp3
 !music/README.md
 !music/library.json
+Input/
