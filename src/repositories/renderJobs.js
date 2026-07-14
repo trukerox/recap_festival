@@ -62,14 +62,17 @@ export async function markFailed(id, errorMessage) {
 }
 
 // For the Videos tab: every job with its project's event name, newest first.
+// NB: LIMIT is inlined as a sanitized integer, not a bound `?` — mysql2's
+// prepared statements reject `LIMIT ?` ("Incorrect arguments to
+// mysqld_stmt_execute"). Safe because `lim` is clamped to an integer here.
 export async function listJobsWithProject(limit = 100) {
+  const lim = Math.max(1, Math.min(500, Number(limit) || 100));
   return query(
     `SELECT j.*, p.event_name
      FROM render_jobs j
      LEFT JOIN projects p ON p.id = j.project_id
      ORDER BY j.queued_at DESC
-     LIMIT ?`,
-    [limit],
+     LIMIT ${lim}`,
   );
 }
 

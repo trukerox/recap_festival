@@ -459,11 +459,12 @@ function videoCard({ title, sub, src, sheet, downloadHref, onDelete, badge }) {
 }
 
 async function loadRenders() {
-  const res = await fetch('/api/jobs');
-  const jobs = await res.json();
   const box = $('rendersList');
+  const res = await fetch('/api/jobs');
+  if (!res.ok) { box.innerHTML = `<p class="error">Couldn't load recaps: ${await res.text()}</p>`; return; }
+  const jobs = await res.json();
   box.innerHTML = '';
-  if (!jobs.length) { box.innerHTML = '<p class="muted">No recaps yet. Generate one in the Recap tab.</p>'; return; }
+  if (!Array.isArray(jobs) || !jobs.length) { box.innerHTML = '<p class="muted">No recaps yet. Generate one in the Recap tab.</p>'; return; }
   for (const j of jobs) {
     const when = j.finished_at ? new Date(j.finished_at).toLocaleString() : new Date(j.queued_at).toLocaleString();
     const sub = `${j.event_name || 'Untitled'} · ${when}` + (j.status !== 'done' ? '' : '');
