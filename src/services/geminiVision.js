@@ -38,10 +38,47 @@ export function geminiEnabled() {
 
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
 
+// Model names/versions drift and vary by key, so instead of hard-coding one
+// (which 404s if the key can't see it) we ask the API which models this key can
+// actually use and pick a flash-class one. Resolved once per process.
+//   undefined = not tried yet, null = none available, string = the model name.
+let resolvedModel;
+async function resolveModel() {
+  if (resolvedModel !== undefined) return resolvedModel;
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.ai.geminiKey}`);
+    if (!res.ok) {
+      logger.warn({ status: res.status }, "gemini ListModels failed — AI tagging disabled");
+      resolvedModel = null;
+      return null;
+    }
+    const data = await res.json();
+    const names = (data.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m) => String(m.name).replace(/^models\//, ""));
+    const pick =
+      names.find((n) => n === config.ai.geminiModel) || // honour configured model if usable
+      names.find((n) => /flash/i.test(n) && !/(exp|thinking|preview)/i.test(n)) || // stable flash
+      names.find((n) => /flash/i.test(n)) || // any flash
+      names[0] || // anything that can generate
+      null;
+    resolvedModel = pick;
+    logger.info({ model: pick, availableCount: names.length }, "gemini model resolved");
+    return pick;
+  } catch (err) {
+    logger.warn({ err: err.message }, "gemini ListModels error — AI tagging disabled");
+    resolvedModel = null;
+    return null;
+  }
+}
+
 // Returns { shotType, hero, quality, subject } or null (no key / any failure —
 // caller falls back to heuristics, so tagging is always best-effort).
 export async function tagImage(imagePath) {
   if (!config.ai.geminiKey) return null;
+
+  const model = await resolveModel();
+  if (!model) return null;
 
   let b64;
   try {
@@ -51,7 +88,7 @@ export async function tagImage(imagePath) {
   }
   const mime = MIME_BY_EXT[extname(imagePath).toLowerCase()] || "image/jpeg";
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.ai.geminiModel}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const body = {
     contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: mime, data: b64 } }] }],
     generationConfig: { temperature: 0.2, response_mime_type: "application/json", response_schema: RESPONSE_SCHEMA },
