@@ -9,6 +9,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import config from "../config/index.js";
+import logger from "../utils/logger.js";
 import { generateEndCard } from "./endCard.js";
 
 const TRANSITION_DURATION = 0.35;
@@ -161,8 +162,21 @@ export async function composeVideo({
   }
   command.input(musicTrack.file_path);
 
+  // Log the exact input→index mapping so an ffmpeg "stream #N:0" error points
+  // straight at a file, and dump the graph + ffmpeg's stderr on failure.
+  logger.info(
+    {
+      inputs: comp.map((it, i) => ({ i, kind: it.kind, w: it.srcWidth, h: it.srcHeight, dur: it.duration, path: it.storedPath })),
+      musicIndex: musicInputIndex,
+      musicPath: musicTrack.file_path,
+      totalDuration,
+    },
+    "ffmpeg inputs",
+  );
+
   try {
     await new Promise((resolve, reject) => {
+      const stderrTail = [];
       // Map explicitly via outputOptions; don't also pass a map to
       // complexFilter or ffmpeg double-maps and errors.
       command
@@ -181,9 +195,17 @@ export async function composeVideo({
           "-t", totalDuration.toFixed(3),
         ])
         .output(outputPath)
+        .on("start", (cmd) => logger.info({ cmd }, "ffmpeg start"))
+        .on("stderr", (line) => {
+          stderrTail.push(line);
+          if (stderrTail.length > 40) stderrTail.shift();
+        })
         .on("progress", (p) => onProgress?.(p))
         .on("end", resolve)
-        .on("error", reject)
+        .on("error", (err) => {
+          logger.error({ err: err.message, stderr: stderrTail.join("\n"), filterGraph }, "ffmpeg render failed");
+          reject(err);
+        })
         .run();
     });
   } finally {
