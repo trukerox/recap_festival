@@ -37,28 +37,80 @@ function panelFilter(sub, inputIndex, width, height, eq, outLabel) {
   );
 }
 
-// Head-punch length: extra zoom decays over this many frames at the cut.
+// Default entrance length: the move resolves over this many frames at the cut.
 const PUNCH_FRAMES = 5;
 
-// Eased Ken Burns via zoompan (idea adapted from image-motion's eased camera +
-// the beat-punch technique common to Shorts editors):
+// Entrance-move palette — the fix for "same transition all over". Each clip
+// enters with a DIFFERENT eased move that resolves within a handful of frames
+// (so the cut still lands ON the beat), giving per-cut variety without any
+// cross-segment xfade (which would smear frames and slide cuts off the beat).
+// Idea from burns' deterministic per-index variation (odd push in / even pull
+// out), extended with directional slides. dz = extra zoom at the cut (decays);
+// dx/dy = offset in output px at the cut (decays); pf = frames to resolve.
+const ENTRANCE_MOVE = {
+  none:     { dz: 0,     dx: 0,    dy: 0,    pf: PUNCH_FRAMES },
+  punch:    { dz: 0.10,  dx: 0,    dy: 0,    pf: 5 },  // slam in, settle
+  pullback: { dz: -0.08, dx: 0,    dy: 0,    pf: 6 },  // start wide, zoom to rest
+  slideL:   { dz: 0.03,  dx: 120,  dy: 0,    pf: 7 },  // whip in from the right
+  slideR:   { dz: 0.03,  dx: -120, dy: 0,    pf: 7 },  // whip in from the left
+  slideU:   { dz: 0.03,  dx: 0,    dy: 120,  pf: 7 },  // push up
+  slideD:   { dz: 0.03,  dx: 0,    dy: -120, pf: 7 },  // push down
+};
+
+// A no-adjacent-duplicate cycle; a random rotation per render keeps successive
+// renders fresh too. Slides are softened to punch/pullback on real video (a
+// directional slide of already-moving footage reads muddy).
+const ENTRANCE_CYCLE = ["punch", "slideL", "pullback", "slideR", "punch", "slideU", "pullback", "slideD"];
+
+// Assign one entrance per timeline segment. Only the energetic (hard-cut)
+// styles get moves; the opening (under the title) and non-photo/video kinds
+// stay still. Videos never slide — they get punch/pullback instead.
+function assignEntrances(comp, hardCuts) {
+  const start = Math.floor(Math.random() * ENTRANCE_CYCLE.length);
+  const out = [];
+  let p = 0;
+  for (const it of comp) {
+    const isMain = it.kind === "photo" || it.kind === "video";
+    if (!hardCuts || !isMain || it.role === "opening" || it.kind === "card") {
+      out.push("none");
+      continue;
+    }
+    let move = ENTRANCE_CYCLE[(start + p) % ENTRANCE_CYCLE.length];
+    if (it.kind === "video" && move.startsWith("slide")) move = p % 2 ? "pullback" : "punch";
+    out.push(move);
+    p++;
+  }
+  return out;
+}
+
+// signed multiplier term, e.g. (0.1, "d") -> "+0.1*d", (-0.08, "d") -> "-0.08*d".
+// Avoids emitting "+-x", which ffmpeg's expression parser dislikes.
+function term(value, expr) {
+  if (!value) return "";
+  return `${value > 0 ? "+" : "-"}${Math.abs(value)}*${expr}`;
+}
+
+// Eased Ken Burns via zoompan (idea adapted from image-motion's eased camera,
+// burns' deterministic per-index variation, and the beat-punch technique from
+// Shorts editors):
 //   * a slow zoom-in across the slice (slowZoom, fraction of baseZoom)
 //   * smooth, BOUNDED horizontal drift using smoothstep, not a linear sweep
 //     (linear full-width pans read "dizzy" — user complaint) — magnitude panPx
-//   * an optional short "punch": extra zoom that decays over the first
-//     PUNCH_FRAMES frames, so each HARD CUT visibly lands ON the beat.
+//   * an ENTRANCE move (see ENTRANCE_MOVE) whose zoom/offset decays over the
+//     first few frames, so each cut lands ON the beat with a fresh feel.
 // Pre-scaling the source to `scaleUp` kills the classic zoompan pixel jitter
-// and leaves room to pan/zoom without exposing black edges (EXIF-safe: cover
-// scale always fills, whatever the rotation).
-function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, slowZoom, punch, panPx, dir, extra = "", label }) {
+// and leaves room to pan/zoom/slide without exposing black edges — zoompan also
+// clamps x/y to valid range, so an aggressive slide safely rests at the edge.
+function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, slowZoom, panPx, dir, move, extra = "", label }) {
   const canW = Math.round(width * scaleUp);
   const canH = Math.round(height * scaleUp);
+  const m = move || ENTRANCE_MOVE.none;
   const prog = `(on/${frames})`;
   const ease = `(${prog}*${prog}*(3-2*${prog}))`; // smoothstep 0->1
-  const punchTerm = punch > 0 ? `+${punch}*max(0,(${PUNCH_FRAMES}-on))/${PUNCH_FRAMES}` : "";
-  const z = `${baseZoom}+${slowZoom}*${prog}${punchTerm}`;
-  const x = panPx ? `(iw-iw/zoom)/2+${(dir * panPx).toFixed(2)}*(${ease}-0.5)` : "(iw-iw/zoom)/2";
-  const y = "(ih-ih/zoom)/2";
+  const decay = `max(0,(${m.pf}-on))/${m.pf}`;    // 1 at the cut -> 0 after pf frames
+  const z = `${baseZoom}${term(slowZoom, prog)}${term(m.dz, decay)}`;
+  const x = `(iw-iw/zoom)/2${term(dir * panPx, `(${ease}-0.5)`)}${term(m.dx, decay)}`;
+  const y = `(ih-ih/zoom)/2${term(m.dy, decay)}`;
   return (
     `[${inputIndex}:v]${extra}scale=${canW}:${canH}:force_original_aspect_ratio=increase,` +
     `crop=${canW}:${canH},${eq},` +
@@ -67,7 +119,7 @@ function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, sl
   );
 }
 
-function segmentFilter({ item, index, width, height, grade, panPx, punch }) {
+function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
   const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
@@ -118,26 +170,28 @@ function segmentFilter({ item, index, width, height, grade, panPx, punch }) {
     };
   }
 
+  const move = ENTRANCE_MOVE[entrance] ?? ENTRANCE_MOVE.none;
+
   // Photo: eased Ken Burns — a slow zoom-in + smooth bounded drift so the shot
-  // feels intentional and alive (not the old mechanical linear sweep), with a
-  // short punch-zoom on hard cuts so the cut lands ON the beat.
+  // feels alive (not the old mechanical linear sweep), plus a varied ENTRANCE
+  // move (punch / pull-back / slide) that resolves on the beat, so no two cuts
+  // feel the same. Larger scaleUp gives the slides room before zoompan clamps.
   if (item.kind === "photo") {
     const dir = index % 2 === 0 ? 1 : -1;
     return {
       label,
       filter: kenBurns({
         inputIndex: item.inputIndex, frames, width, height, eq,
-        scaleUp: 1.2, baseZoom: 1.2, slowZoom: 0.06,
-        punch: punch ? 0.06 : 0, panPx, dir, label,
+        scaleUp: 1.25, baseZoom: 1.2, slowZoom: 0.06,
+        panPx, dir, move, label,
       }),
     };
   }
 
-  // Video clip: cover-crop to fill + colour lift. When there's no camera move
-  // to apply (no punch), keep the cheap plain cover-crop; otherwise route
-  // through zoompan for a subtle beat-punch on the cut.
+  // Video clip: cover-crop to fill + colour lift. With no entrance move, keep
+  // the cheap plain cover-crop; otherwise route through zoompan for the move.
   const trim = `trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,`;
-  if (!punch) {
+  if (entrance === "none" || entrance == null) {
     return {
       label,
       filter:
@@ -150,8 +204,8 @@ function segmentFilter({ item, index, width, height, grade, panPx, punch }) {
     label,
     filter: kenBurns({
       inputIndex: item.inputIndex, frames, width, height, eq,
-      scaleUp: 1.12, baseZoom: 1.12, slowZoom: 0,
-      punch: 0.05, panPx: 0, dir: 0, extra: trim, label,
+      scaleUp: 1.18, baseZoom: 1.15, slowZoom: 0,
+      panPx: 0, dir: 0, move, extra: trim, label,
     }),
   };
 }
@@ -250,10 +304,11 @@ export async function composeVideo({
   }
   const musicInputIndex = inputIdx;
 
-  // Beat-punch only on the hard-cut (energetic) styles — the smooth cinematic
-  // style keeps its calm eased drift with no punch.
+  // Varied per-cut entrance moves on the hard-cut (energetic) styles so no two
+  // cuts feel the same; the smooth cinematic style keeps its calm eased drift.
+  const entrances = assignEntrances(comp, hardCuts);
   const segments = comp.map((item, index) =>
-    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, punch: hardCuts }),
+    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, entrance: entrances[index] }),
   );
   const durations = comp.map((item) => item.duration);
 
