@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db/pool.js";
+import config from "../config/index.js";
 
 export const healthRouter = Router();
 
@@ -10,6 +11,12 @@ healthRouter.get("/health", async (_req, res) => {
   } catch {
     res.status(503).json({ status: "degraded", db: "down" });
   }
+});
+
+// Non-secret runtime config the frontend reads (e.g. to label the button with
+// the real target duration rather than a hardcoded number).
+healthRouter.get("/config", (_req, res) => {
+  res.json({ renderDurationSeconds: config.render.durationSeconds });
 });
 
 export default healthRouter;

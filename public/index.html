@@ -72,7 +72,7 @@
 
     <fieldset id="step-render" class="hidden">
       <legend>3. Generate recap</legend>
-      <button id="renderBtn">Generate 20s recap video</button>
+      <button id="renderBtn">Generate recap video</button>
       <div id="status"></div>
       <video id="preview" class="hidden" controls></video>
       <a id="downloadLink" class="hidden" href="#">Download video</a>
@@ -174,6 +174,11 @@ let jobId = null;
 $('tabRecapBtn').addEventListener('click', () => switchTab('recap'));
 $('tabMusicBtn').addEventListener('click', () => switchTab('music'));
 $('tabVideosBtn').addEventListener('click', () => switchTab('videos'));
+
+// Label the generate button with the real configured target duration.
+fetch('/api/config').then((r) => r.json()).then((c) => {
+  if (c && c.renderDurationSeconds) $('renderBtn').textContent = `Generate ${c.renderDurationSeconds}s recap video`;
+}).catch(() => {});
 
 function switchTab(name) {
   $('tab-recap').classList.toggle('hidden', name !== 'recap');
