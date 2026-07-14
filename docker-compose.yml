@@ -14,8 +14,11 @@
 # pattern as job_search, which also skips Redis).
 #
 # SECRETS (Docker secret file mounts → read by src/utils/secrets.js):
-#   db_password  → MariaDB `festival_recap` user password
-#   jwt_secret   → session/download-link signing key (openssl rand -hex 32)
+#   db_password     → MariaDB `festival_recap` user password
+#   jwt_secret      → session/download-link signing key (openssl rand -hex 32)
+#   gemini_api_key  → Gemini vision key for AI shot tagging (aistudio.google.com)
+#                     NB: the file MUST exist or `docker compose up` fails — leave
+#                     it EMPTY to disable AI tagging (falls back to heuristics).
 #
 # FIRST RUN:
 #   1) Create DB + user in MariaDB (see scripts/sql/000_create_db_user.sql)
@@ -45,6 +48,7 @@ services:
     secrets:
       - db_password
       - jwt_secret
+      - gemini_api_key
     volumes:
       # Uploads + rendered output + scratch render workspace. Persist across
       # rebuilds; uploads/renders should be included in backups, tmp can be
@@ -91,6 +95,8 @@ secrets:
     file: ./secrets/db_password.txt
   jwt_secret:
     file: ./secrets/jwt_secret.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
 
 # `web` is created by the Caddy/MariaDB stack; it is shared and external here.
 networks:
