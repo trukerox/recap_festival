@@ -18,6 +18,14 @@ import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
 import { getStyle } from "../services/styles.js";
 
+// "HH:MM:SS.xx" -> seconds (null if unparseable).
+function timemarkToSeconds(mark) {
+  if (typeof mark !== "string") return null;
+  const m = mark.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
 async function analyzeProjectMedia(projectId) {
   const items = await listByProject(projectId);
   for (const item of items) {
@@ -89,9 +97,13 @@ async function processJob(job) {
     titleSubText: buildTitleSub(project),
     outputPath,
     onProgress: (p) => {
-      // p.percent is unreliable for filter_complex graphs (ffmpeg can't always
-      // predict total frames); fall back to a coarse frame-based estimate.
-      const percent = Math.min(95, Math.round((p.frames ?? 0) / (config.render.durationSeconds * 30) * 100));
+      // Estimate from output time processed (timemark "HH:MM:SS.xx"), which
+      // climbs more steadily than the frame count for nested-xfade graphs.
+      // Still approximate — ffmpeg emits progress in bursts — so the UI shows
+      // elapsed time + a "jumps near the end" note rather than trusting this %.
+      const secs = timemarkToSeconds(p.timemark);
+      const est = secs != null ? secs / config.render.durationSeconds : (p.frames ?? 0) / (config.render.durationSeconds * 30);
+      const percent = Math.min(95, Math.round(est * 100));
       if (percent > 0) markProgress(job.id, percent).catch(() => {});
     },
   });

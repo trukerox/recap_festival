@@ -173,6 +173,7 @@
 const $ = (id) => document.getElementById(id);
 let projectId = null;
 let jobId = null;
+let renderStartMs = 0;
 
 // Persist the current project across browser refreshes (a deploy + hard-refresh
 // used to wipe it, forcing a full re-upload). We only store the id; the server
@@ -368,26 +369,39 @@ $('renderBtn').addEventListener('click', async () => {
   }
   const job = await res.json();
   jobId = job.id;
-  $('status').textContent = 'Status: queued (0%)';
+  renderStartMs = Date.now();
+  $('status').textContent = 'Queued…';
   pollJob();
 });
 
+// The progress % is only a rough estimate — a deeply-nested xfade chain makes
+// ffmpeg emit frames in bursts, so the % plateaus then jumps. Show elapsed time
+// + a reassurance so a plateau doesn't read as "stuck", and keep polling through
+// transient fetch errors so the display never silently freezes.
 async function pollJob() {
-  const res = await fetch(`/api/jobs/${jobId}`);
-  const job = await res.json();
-  $('status').textContent = `Status: ${job.status} (${job.progress_percent}%)`;
-
-  if (job.status === 'done') {
-    $('preview').src = `/api/jobs/${jobId}/download`;
-    $('preview').classList.remove('hidden');
-    $('downloadLink').href = `/api/jobs/${jobId}/download`;
-    $('downloadLink').classList.remove('hidden');
-    return;
-  }
-  if (job.status === 'failed') {
-    $('status').innerHTML += `<br><span class="error">${job.error_message || 'Render failed'}</span>`;
-    $('renderBtn').disabled = false;
-    return;
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    const job = await res.json();
+    if (job.status === 'done') {
+      $('status').textContent = '✔ Done!';
+      $('preview').src = `/api/jobs/${jobId}/download`;
+      $('preview').classList.remove('hidden');
+      $('downloadLink').href = `/api/jobs/${jobId}/download`;
+      $('downloadLink').classList.remove('hidden');
+      $('renderBtn').disabled = false;
+      return;
+    }
+    if (job.status === 'failed') {
+      $('status').innerHTML = `<span class="error">Render failed: ${job.error_message || 'unknown error'}</span>`;
+      $('renderBtn').disabled = false;
+      return;
+    }
+    const secs = Math.round((Date.now() - renderStartMs) / 1000);
+    const pct = job.progress_percent || 0;
+    $('status').textContent =
+      `Rendering… ~${pct}% · ${secs}s elapsed (usually 3–5 min; the % is approximate and jumps near the end)`;
+  } catch {
+    // transient network error — keep polling rather than freezing
   }
   setTimeout(pollJob, 3000);
 }
