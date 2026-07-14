@@ -52,7 +52,10 @@ async function start() {
   const stopWorker = startWorkerLoop();
 
   const server = app.listen(config.port, () => {
-    logger.info({ port: config.port, env: config.env }, "festival_recap listening");
+    logger.info(
+      { port: config.port, env: config.env, aiTagging: Boolean(config.ai.geminiKey), geminiModel: config.ai.geminiModel },
+      "festival_recap listening",
+    );
   });
 
   const shutdown = (sig) => {
