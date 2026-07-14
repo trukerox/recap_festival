@@ -52,7 +52,7 @@ jobsRouter.get("/:id/frames", async (req, res, next) => {
     if (job.status !== "done" || !job.output_path) {
       throw httpError(409, `Job is not finished yet (status: ${job.status})`);
     }
-    const sheet = await makeContactSheet(resolve(process.cwd(), job.output_path));
+    const sheet = resolve(await makeContactSheet(resolve(process.cwd(), job.output_path)));
     res.sendFile(sheet, (err) => {
       unlink(sheet).catch(() => {});
       if (err && !res.headersSent) next(err);

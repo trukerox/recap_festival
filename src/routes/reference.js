@@ -51,7 +51,7 @@ referenceRouter.post("/", referenceUpload.single("video"), (req, res, next) => {
 // Keyframe contact sheet for a reference clip (same as renders).
 referenceRouter.get("/:name/frames", async (req, res, next) => {
   try {
-    const sheet = await makeContactSheet(resolve(safeRefPath(req.params.name)));
+    const sheet = resolve(await makeContactSheet(resolve(safeRefPath(req.params.name))));
     res.sendFile(sheet, (err) => {
       unlink(sheet).catch(() => {});
       if (err && !res.headersSent) next(httpError(404, "Clip not found"));
