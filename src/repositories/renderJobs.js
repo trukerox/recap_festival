@@ -60,3 +60,22 @@ export async function markFailed(id, errorMessage) {
   );
   return getJob(id);
 }
+
+// For the Videos tab: every job with its project's event name, newest first.
+export async function listJobsWithProject(limit = 100) {
+  return query(
+    `SELECT j.*, p.event_name
+     FROM render_jobs j
+     LEFT JOIN projects p ON p.id = j.project_id
+     ORDER BY j.queued_at DESC
+     LIMIT ?`,
+    [limit],
+  );
+}
+
+export async function deleteJob(id) {
+  const job = await getJob(id);
+  if (!job) return null;
+  await query("DELETE FROM render_jobs WHERE id = ?", [id]);
+  return job;
+}

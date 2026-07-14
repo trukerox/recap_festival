@@ -32,6 +32,9 @@ export const config = {
     renderDir: process.env.RENDER_DIR || "./data/renders",
     tmpDir: process.env.TMP_DIR || "./data/tmp",
     musicDir: process.env.MUSIC_DIR || "./music",
+    // Reference clips (e.g. Canva examples) uploaded to study editing style —
+    // not part of any render, just stored + played back in the Videos tab.
+    referenceDir: process.env.REFERENCE_DIR || "./data/reference",
   },
 
   upload: {

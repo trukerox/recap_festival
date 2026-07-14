@@ -154,8 +154,15 @@ All under `/api`. See [src/routes/](../src/routes/) for the implementation.
 | `GET`  | `/api/projects/:id` | Project details + its uploaded media list |
 | `POST` | `/api/projects/:id/media` | Multipart upload — `media` (up to `MAX_UPLOAD_FILES`) + optional `watermark` |
 | `POST` | `/api/projects/:id/render` | Enqueue a render job (requires ≥ 3 uploaded media items) |
+| `GET`  | `/api/jobs` | List all render jobs (newest first, with project event name) for the Videos tab |
 | `GET`  | `/api/jobs/:id` | Job status: `queued → analyzing → selecting → rendering → done/failed`, `progress_percent` |
-| `GET`  | `/api/jobs/:id/download` | Streams the finished MP4 |
+| `GET`  | `/api/jobs/:id/video` | Inline MP4 stream (Range-enabled) for the Videos-tab `<video>` player |
+| `GET`  | `/api/jobs/:id/download` | Streams the finished MP4 as an attachment |
+| `DELETE` | `/api/jobs/:id` | Delete a render (DB row + output file) |
+| `GET`  | `/api/reference` | List uploaded reference clips (Canva examples etc.) |
+| `POST` | `/api/reference` | Upload a reference video (field `video`) into `/mnt/storage/festival_recap/data/reference` |
+| `GET`  | `/api/reference/:name/video` | Inline stream a reference clip |
+| `DELETE` | `/api/reference/:name` | Delete a reference clip |
 | `GET`  | `/api/music` | List the *active* local royalty-free catalog (optionally `?genre=`) — used by render job track selection |
 | `GET`  | `/api/music/all` | List every track (active + inactive) — used by the Music tab's library table |
 | `POST` | `/api/music/upload` | **The only server-side add path.** Multipart upload of an mp3 (field `audio`) + `title`/`genre`/`artist?`/`license?`/`sourceUrl?`/`bpm?`; auto-detects BPM from the file, upserts the DB row. The audio always comes from a browser (upload form or extension) — the server never fetches the source site. |

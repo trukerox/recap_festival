@@ -133,9 +133,12 @@ export async function composeVideo({
       `borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3)'[vout]`,
   ];
 
+  // Long fade-out over the last ~2.5s so the music swells down through the
+  // branded end card (dramatic lead-in to the evestival.com CTA).
+  const fadeOut = Math.min(2.5, totalDuration / 2);
   const audioFilter =
     `[${musicInputIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
-    `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - 0.6).toFixed(3)}:d=0.6[aout]`;
+    `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}[aout]`;
 
   const filterGraph = [...segments.map((s) => s.filter), ...xfadeFilters, ...textFilters, audioFilter].join(";");
 

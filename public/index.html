@@ -25,6 +25,12 @@
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.75rem; }
   th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #333; }
   .muted { color: #888; font-size: 0.85rem; }
+  .vcard { border: 1px solid #333; border-radius: 8px; padding: 12px; margin-top: 12px; background: #1a1a1a; }
+  .vcard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .vcard-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .vplayer { width: 100%; max-width: 260px; border-radius: 6px; margin-top: 10px; background: black; display: block; }
+  .badge { font-size: 0.7rem; background: #6d5dfc; color: white; padding: 1px 7px; border-radius: 10px; vertical-align: middle; }
+  .btnlink { font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; background: #333; color: #eee; text-decoration: none; }
 </style>
 </head>
 <body>
@@ -33,6 +39,7 @@
   <div class="tabs">
     <button id="tabRecapBtn" class="active">Recap</button>
     <button id="tabMusicBtn">Music</button>
+    <button id="tabVideosBtn">Videos</button>
   </div>
 
   <div id="tab-recap">
@@ -141,6 +148,23 @@
     </fieldset>
   </div>
 
+  <div id="tab-videos" class="hidden">
+    <fieldset>
+      <legend>Your recaps</legend>
+      <button id="refreshVideosBtn" class="secondary">Refresh</button>
+      <div id="rendersList"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Reference clips (e.g. Canva examples)</legend>
+      <p class="muted">Upload example videos here to keep them handy for comparing editing styles. Stored on the server and playable below.</p>
+      <label>Video file (MP4, MOV, WEBM)<input id="refFile" type="file" accept="video/*,.mp4,.mov,.webm,.m4v"></label>
+      <button id="refUploadBtn">Upload reference clip</button>
+      <div id="refUploadStatus"></div>
+      <div id="referenceList"></div>
+    </fieldset>
+  </div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let projectId = null;
@@ -148,9 +172,13 @@ let jobId = null;
 
 $('tabRecapBtn').addEventListener('click', () => switchTab('recap'));
 $('tabMusicBtn').addEventListener('click', () => switchTab('music'));
+$('tabVideosBtn').addEventListener('click', () => switchTab('videos'));
 
 function switchTab(name) {
   $('tab-recap').classList.toggle('hidden', name !== 'recap');
+  $('tab-videos').classList.toggle('hidden', name !== 'videos');
+  $('tabVideosBtn').classList.toggle('active', name === 'videos');
+  if (name === 'videos') { loadRenders(); loadReferences(); }
   $('tab-music').classList.toggle('hidden', name !== 'music');
   $('tabRecapBtn').classList.toggle('active', name === 'recap');
   $('tabMusicBtn').classList.toggle('active', name === 'music');
@@ -389,6 +417,129 @@ async function loadMusicLibrary() {
     tbody.appendChild(tr);
   }
 }
+
+// ---- Videos tab ----
+function fmtBytes(n) {
+  if (!n) return '';
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? mb.toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
+}
+
+function videoCard({ title, sub, src, downloadHref, onDelete, badge }) {
+  const card = document.createElement('div');
+  card.className = 'vcard';
+  const head = document.createElement('div');
+  head.className = 'vcard-head';
+  head.innerHTML = `<div><strong>${title}</strong>${badge ? ` <span class="badge">${badge}</span>` : ''}<div class="muted">${sub || ''}</div></div>`;
+  const actions = document.createElement('div');
+  actions.className = 'vcard-actions';
+  if (downloadHref) {
+    const a = document.createElement('a');
+    a.className = 'btnlink'; a.href = downloadHref; a.textContent = 'Download';
+    actions.appendChild(a);
+  }
+  const del = document.createElement('button');
+  del.className = 'secondary'; del.textContent = 'Delete';
+  del.addEventListener('click', onDelete);
+  actions.appendChild(del);
+  head.appendChild(actions);
+  card.appendChild(head);
+  if (src) {
+    const v = document.createElement('video');
+    v.controls = true; v.preload = 'metadata'; v.src = src; v.className = 'vplayer';
+    card.appendChild(v);
+  }
+  return card;
+}
+
+async function loadRenders() {
+  const res = await fetch('/api/jobs');
+  const jobs = await res.json();
+  const box = $('rendersList');
+  box.innerHTML = '';
+  if (!jobs.length) { box.innerHTML = '<p class="muted">No recaps yet. Generate one in the Recap tab.</p>'; return; }
+  for (const j of jobs) {
+    const when = j.finished_at ? new Date(j.finished_at).toLocaleString() : new Date(j.queued_at).toLocaleString();
+    const sub = `${j.event_name || 'Untitled'} · ${when}` + (j.status !== 'done' ? '' : '');
+    if (j.status === 'done') {
+      box.appendChild(videoCard({
+        title: j.event_name || `Recap #${j.id}`,
+        sub: when,
+        src: `/api/jobs/${j.id}/video`,
+        downloadHref: `/api/jobs/${j.id}/download`,
+        onDelete: async () => {
+          if (!confirm('Delete this recap video?')) return;
+          const r = await fetch(`/api/jobs/${j.id}`, { method: 'DELETE' });
+          if (r.ok) loadRenders(); else alert('Delete failed: ' + (await r.text()));
+        },
+      }));
+    } else {
+      const div = document.createElement('div');
+      div.className = 'vcard';
+      const statusText = j.status === 'failed'
+        ? `<span class="error">failed</span>${j.error_message ? ' — ' + j.error_message.slice(0, 200) : ''}`
+        : `${j.status} (${j.progress_percent}%)`;
+      div.innerHTML = `<div class="vcard-head"><div><strong>${j.event_name || ('Recap #' + j.id)}</strong><div class="muted">${sub}</div><div>${statusText}</div></div></div>`;
+      const del = document.createElement('button');
+      del.className = 'secondary'; del.textContent = 'Delete';
+      del.style.marginTop = '8px';
+      del.addEventListener('click', async () => {
+        const r = await fetch(`/api/jobs/${j.id}`, { method: 'DELETE' });
+        if (r.ok) loadRenders(); else alert('Delete failed: ' + (await r.text()));
+      });
+      div.appendChild(del);
+      box.appendChild(div);
+    }
+  }
+}
+
+async function loadReferences() {
+  const res = await fetch('/api/reference');
+  const clips = await res.json();
+  const box = $('referenceList');
+  box.innerHTML = '';
+  if (!clips.length) { box.innerHTML = '<p class="muted">No reference clips uploaded yet.</p>'; return; }
+  for (const c of clips) {
+    box.appendChild(videoCard({
+      title: c.name,
+      sub: `${fmtBytes(c.sizeBytes)} · ${new Date(c.uploadedAt).toLocaleString()}`,
+      src: `/api/reference/${encodeURIComponent(c.name)}/video`,
+      badge: 'reference',
+      onDelete: async () => {
+        if (!confirm(`Delete reference clip "${c.name}"?`)) return;
+        const r = await fetch(`/api/reference/${encodeURIComponent(c.name)}`, { method: 'DELETE' });
+        if (r.ok) loadReferences(); else alert('Delete failed: ' + (await r.text()));
+      },
+    }));
+  }
+}
+
+$('refreshVideosBtn').addEventListener('click', () => { loadRenders(); loadReferences(); });
+
+$('refUploadBtn').addEventListener('click', () => {
+  const file = $('refFile').files[0];
+  if (!file) return alert('Choose a video file first');
+  const form = new FormData();
+  form.append('video', file);
+  const xhr = new XMLHttpRequest();
+  $('refUploadBtn').disabled = true;
+  $('refUploadStatus').textContent = 'Uploading…';
+  xhr.upload.addEventListener('progress', (e) => {
+    if (e.lengthComputable) $('refUploadStatus').textContent = `Uploading… ${Math.round((e.loaded / e.total) * 100)}%`;
+  });
+  xhr.addEventListener('load', () => {
+    $('refUploadBtn').disabled = false;
+    if (xhr.status >= 200 && xhr.status < 300) {
+      $('refUploadStatus').textContent = 'Uploaded.';
+      $('refFile').value = '';
+      loadReferences();
+    } else {
+      $('refUploadStatus').innerHTML = `<span class="error">${xhr.responseText}</span>`;
+    }
+  });
+  xhr.open('POST', '/api/reference');
+  xhr.send(form);
+});
 </script>
 </body>
 </html>

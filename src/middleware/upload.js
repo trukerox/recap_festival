@@ -104,3 +104,35 @@ export const musicUpload = multer({
   fileFilter: audioFilter,
   limits: { files: 1, fileSize: 30 * 1024 * 1024 }, // 30MB is plenty for a short track
 });
+
+// ── Reference-clip upload ────────────────────────────────────────────────────
+// Standalone video examples (e.g. Canva exports) stored for review in the
+// Videos tab — not tied to any project/render.
+const referenceStorage = multer.diskStorage({
+  destination(_req, _file, cb) {
+    try {
+      mkdirSync(config.paths.referenceDir, { recursive: true });
+      cb(null, config.paths.referenceDir);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename(_req, file, cb) {
+    const base = slugify(file.originalname.replace(/\.[^.]+$/, "")) || "clip";
+    const ext = extname(file.originalname).toLowerCase() || ".mp4";
+    // Short random suffix keeps same-named uploads from clobbering each other.
+    cb(null, `${base}-${randomUUID().slice(0, 8)}${ext}`);
+  },
+});
+
+function referenceVideoFilter(_req, file, cb) {
+  const ok = file.mimetype.startsWith("video/") || /\.(mp4|mov|webm|m4v)$/i.test(file.originalname);
+  if (!ok) return cb(httpError(415, `Unsupported video type: ${file.mimetype}`));
+  cb(null, true);
+}
+
+export const referenceUpload = multer({
+  storage: referenceStorage,
+  fileFilter: referenceVideoFilter,
+  limits: { files: 1, fileSize: 200 * 1024 * 1024 }, // 200MB
+});

@@ -14,12 +14,13 @@ import { healthRouter } from "./routes/health.js";
 import { projectsRouter } from "./routes/projects.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { musicRouter } from "./routes/music.js";
+import { referenceRouter } from "./routes/reference.js";
 import { startWorkerLoop } from "./queue/worker.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", "public");
 
-for (const dir of [config.paths.uploadDir, config.paths.renderDir, config.paths.tmpDir]) {
+for (const dir of [config.paths.uploadDir, config.paths.renderDir, config.paths.tmpDir, config.paths.referenceDir]) {
   mkdirSync(dir, { recursive: true });
 }
 
@@ -34,6 +35,7 @@ app.use("/api", healthRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/jobs", jobsRouter);
 app.use("/api/music", musicRouter);
+app.use("/api/reference", referenceRouter);
 
 app.use(express.static(PUBLIC_DIR));
 app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(join(PUBLIC_DIR, "index.html")));
