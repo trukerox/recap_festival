@@ -344,6 +344,22 @@ $('renderBtn').addEventListener('click', async () => {
     $('renderBtn').disabled = false;
     return;
   }
+  // Apply whatever's currently in the form to the project BEFORE rendering, so a
+  // re-render of the same media picks up an edited event name / music style
+  // (e.g. switching to "reggae"). Without this, re-render replayed the project's
+  // original settings and ignored the form.
+  if ($('eventName').value.trim()) {
+    await fetch(`/api/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventName: $('eventName').value.trim(),
+        location: $('location').value.trim() || undefined,
+        eventDate: $('eventDate').value || undefined,
+        musicStyle: $('musicStyle').value.trim() || undefined,
+      }),
+    }).catch(() => {});
+  }
   const res = await fetch(`/api/projects/${projectId}/render`, { method: 'POST' });
   if (!res.ok) {
     $('status').innerHTML = `<span class="error">${await res.text()}</span>`;
@@ -352,6 +368,7 @@ $('renderBtn').addEventListener('click', async () => {
   }
   const job = await res.json();
   jobId = job.id;
+  $('status').textContent = 'Status: queued (0%)';
   pollJob();
 });
 

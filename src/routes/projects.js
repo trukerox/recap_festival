@@ -4,7 +4,7 @@ import { relative } from "node:path";
 import config from "../config/index.js";
 import { httpError } from "../middleware/errorHandler.js";
 import { mediaUpload, kindForMime } from "../middleware/upload.js";
-import { createProject, getProject, setWatermark } from "../repositories/projects.js";
+import { createProject, getProject, setWatermark, updateProject } from "../repositories/projects.js";
 import { insertMediaItem, listByProject, countByProject } from "../repositories/mediaItems.js";
 import { createJob } from "../repositories/renderJobs.js";
 import { pickForStyle } from "../repositories/musicTracks.js";
@@ -29,6 +29,27 @@ projectsRouter.post("/", async (req, res, next) => {
     const body = createProjectSchema.parse(req.body);
     const project = await createProject(body);
     res.status(201).json(project);
+  } catch (err) {
+    next(err.issues ? httpError(400, err.issues.map((i) => i.message).join("; ")) : err);
+  }
+});
+
+// Update editable metadata (event name / location / date / music style) on an
+// existing project — lets a re-render of the same media apply new form values.
+const patchProjectSchema = z.object({
+  eventName: z.string().min(1).max(255).optional(),
+  location: z.string().max(255).optional(),
+  eventDate: z.string().date().optional(),
+  musicStyle: z.string().trim().max(32).transform((s) => s.toLowerCase()).optional(),
+});
+
+projectsRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id);
+    if (!project) throw httpError(404, "Project not found");
+    const body = patchProjectSchema.parse(req.body ?? {});
+    const updated = await updateProject(project.id, body);
+    res.json(updated);
   } catch (err) {
     next(err.issues ? httpError(400, err.issues.map((i) => i.message).join("; ")) : err);
   }
