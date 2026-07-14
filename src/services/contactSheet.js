@@ -28,15 +28,21 @@ export async function makeContactSheet(videoPath) {
   await new Promise((resolve, reject) => {
     const args = [
       "-y",
+      "-an",
       "-i", videoPath,
+      // scale -2 keeps dimensions even (odd sizes make the JPEG encoder fail);
+      // explicit tile layout= is the robust form.
+      "-vf", `fps=${fps.toFixed(4)},scale=300:-2,tile=layout=${COLS}x${ROWS}:padding=6:color=black`,
       "-frames:v", "1",
-      "-vf", `fps=${fps.toFixed(4)},scale=300:-1,tile=${COLS}x${ROWS}:padding=6:color=black`,
       out,
     ];
+    let stderr = "";
     const proc = spawn("ffmpeg", args);
-    proc.stderr.on("data", () => {});
+    proc.stderr.on("data", (d) => { stderr += d.toString(); });
     proc.on("error", reject);
-    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg contact sheet failed (${code})`))));
+    proc.on("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`ffmpeg contact sheet failed (${code}): ${stderr.slice(-600)}`)),
+    );
   });
 
   return out;
