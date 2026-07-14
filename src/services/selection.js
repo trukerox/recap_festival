@@ -17,6 +17,9 @@ const CLOSING_SECONDS = 3;
 const MIN_ENDCARD_SECONDS = 2.5;
 const MIN_SLICE_SECONDS = 0.7;
 const MAX_SLICE_SECONDS = 2.6;
+// How long a single shot may be stretched to fill the reel WITHOUT repeating any
+// shot. Only reached when very few shots are available; a long hold beats a dupe.
+const MAX_FILL_SECONDS = 6.0;
 const MAX_HERO_SECONDS = 2.8;
 const DEFAULT_TARGET_SLICE = 1.5;
 const HOOK_TARGET_SECONDS = 1.0;
@@ -105,10 +108,6 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   const { beats, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure } = opts;
   const useHook = Boolean(structure?.hook);
   const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook, directorOrder: opts.directorOrder });
-  // A copy of the full highlight pool to REUSE if we run out of fresh shots
-  // before the end-card window — otherwise the closing shot freezes for the
-  // remaining seconds (the "stuck" bug). Reusing shots keeps the edit cutting.
-  const recyclePool = queue.slice();
 
   const usableEnd = totalDurationSeconds - MIN_ENDCARD_SECONDS;
   // Beat times inside the content window, ascending.
@@ -128,10 +127,7 @@ function buildBeatTimeline(scoredMediaRows, opts) {
     B.push(Number(t.toFixed(4)));
   }
 
-  const normalAdvance = beatsFor(targetSlice);
-  const heroAdvance = Math.max(normalAdvance, beatsFor(Math.min(MAX_HERO_SECONDS, targetSlice * Math.max(1, heroHold))));
   const split3Advance = beatsFor(SPLIT3_TARGET_SECONDS);
-  const bounceAdvance = 1;
 
   // First cut: the first beat at/after the opening target, so the opening
   // (title/hook) plays over the intro and the first cut lands on a real beat.
@@ -142,32 +138,41 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   const head = [toTimelineItem(opening, "opening", B[idx])]; // 0 -> first beat
   const seq = [];
 
-  // beatcut: 3-panel splits right after the hook (middle stays the hook shot).
+  // beatcut: 3-panel stacked split. All three panels are now DISTINCT shots —
+  // the middle panel used to re-use the opening shot, a visible duplicate.
   let split3Left = Math.max(0, structure?.split3 ?? 0);
-  while (split3Left > 0 && queue.length >= 2 && idx + split3Advance < B.length) {
+  while (split3Left > 0 && queue.length >= 3 && idx + split3Advance < B.length) {
     const next = idx + split3Advance;
     if (B[next] > usableEnd) break;
-    seq.push(toSplit3Item(queue.shift(), opening, queue.shift(), B[next] - B[idx]));
+    seq.push(toSplit3Item(queue.shift(), queue.shift(), queue.shift(), B[next] - B[idx]));
     idx = next;
     split3Left--;
   }
 
-  // Middle: keep cutting on real beats until the end-card window. Close-ups are
-  // held for more beats (hero); 2-up split moments drop in at spaced slots. If
-  // we run out of fresh shots before the end, RECYCLE the pool (reuse shots)
-  // rather than freezing the closing shot for the remaining seconds.
-  let splitsLeft = Math.max(0, splitMoments);
-  const splitSlots = new Set(splitMoments > 0 ? [2, 6, 10] : []);
+  // NO REPEATS. Pace the remaining cuts so the shots we still have fill the
+  // window exactly — one shot, one slot, nothing shown twice. We used to RECYCLE
+  // the pool when it ran dry (to avoid the closing shot freezing), and that's
+  // what put the same photo on screen more than once. Instead the slice now
+  // STRETCHES when shots are scarce; when the style's pace is slower than needed
+  // we simply use fewer shots. Either way no shot is ever repeated.
+  const splitCount = Math.max(0, splitMoments);
+  const remainingSegments = Math.max(1, queue.length - splitCount); // a 2-up split eats 1 extra shot
+  const remainingWindow = Math.max(0.1, usableEnd - B[idx]);
+  // Work in BEATS (cuts must land on them). Round the fill pace UP so the shots
+  // we have cover the window — rounding down would run out early and leave the
+  // end card holding the slack. Never cut faster than the style wants, and never
+  // stretch a shot past MAX_FILL_SECONDS.
+  const minAdvance = beatsFor(targetSlice);
+  const fillAdvance = Math.max(1, Math.ceil(remainingWindow / (remainingSegments * medianGap)));
+  const maxAdvance = beatsFor(MAX_FILL_SECONDS);
+  const normalAdvance = Math.min(maxAdvance, Math.max(minAdvance, fillAdvance));
+  const effSlice = normalAdvance * medianGap;
+  const heroAdvance = Math.max(normalAdvance, beatsFor(Math.min(MAX_HERO_SECONDS, effSlice * Math.max(1, heroHold))));
+
+  let splitsLeft = splitCount;
+  const splitSlots = new Set(splitCount > 0 ? [2, 6, 10] : []);
   let slot = 0;
-  let lastId = null;
-  while (idx < B.length) {
-    if (queue.length === 0) {
-      if (recyclePool.length === 0) break; // nothing at all to show — bail
-      const refill = recyclePool.slice();
-      // avoid an immediate repeat of the last shot across the seam
-      if (refill.length > 1 && refill[0].id === lastId) refill.push(refill.shift());
-      queue.push(...refill);
-    }
+  while (idx < B.length && queue.length > 0) {
     if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
       const next = idx + normalAdvance;
       if (next >= B.length || B[next] > usableEnd) break;
@@ -180,21 +185,12 @@ function buildBeatTimeline(scoredMediaRows, opts) {
       const next = idx + advance;
       if (next >= B.length || B[next] > usableEnd) break;
       seq.push(toTimelineItem(queue.shift(), "highlight", B[next] - B[idx]));
-      lastId = row.id;
       idx = next;
     }
     slot++;
   }
 
-  // Bounce-back: flash an earlier highlight again for one beat before the card.
-  if (structure?.bounceBack && seq.length > 0 && idx + bounceAdvance < B.length && B[idx + bounceAdvance] <= usableEnd) {
-    const source = seq.find((s) => s.kind !== "split" && s.kind !== "split3");
-    if (source) {
-      const next = idx + bounceAdvance;
-      seq.push({ ...source, role: "bounce", duration: B[next] - B[idx] });
-      idx = next;
-    }
-  }
+  // (Bounce-back removed: it deliberately re-showed an earlier shot.)
 
   // End card starts on the last cut beat and runs to the target end — so even
   // the cut INTO the branded card lands on a beat.
@@ -213,19 +209,19 @@ function buildGridTimeline(scoredMediaRows, opts) {
     return n * beat;
   };
   const { opening, closing, queue } = prepare(scoredMediaRows, { closeupBias, useHook: false, directorOrder: opts.directorOrder });
-  const recyclePool = queue.slice(); // reuse shots if we run short (see beat path)
 
-  const slice = snap(targetSlice);
-  const heroSlice = snap(Math.min(MAX_HERO_SECONDS, targetSlice * Math.max(1, heroHold)), MAX_HERO_SECONDS);
   const budget = Math.max(0, totalDurationSeconds - OPENING_SECONDS - CLOSING_SECONDS);
+  // NO REPEATS (see the beat path): stretch the slice so the shots we have fill
+  // the budget, rather than recycling the pool and showing a shot twice.
+  const splitCount = Math.max(0, splitMoments);
+  const segments = Math.max(1, queue.length - splitCount);
+  const effTarget = Math.max(MIN_SLICE_SECONDS, Math.min(MAX_FILL_SECONDS, Math.max(targetSlice, budget / segments)));
+  const slice = snap(effTarget, MAX_FILL_SECONDS);
+  const heroSlice = snap(Math.min(MAX_HERO_SECONDS, effTarget * Math.max(1, heroHold)), MAX_HERO_SECONDS);
   const middle = [];
-  let spent = 0, slot = 0, splitsLeft = Math.max(0, splitMoments);
-  const splitSlots = new Set(splitMoments > 0 ? [2, 6, 10] : []);
-  while (spent < budget - 0.001) {
-    if (queue.length === 0) {
-      if (recyclePool.length === 0) break;
-      queue.push(...recyclePool.slice());
-    }
+  let spent = 0, slot = 0, splitsLeft = splitCount;
+  const splitSlots = new Set(splitCount > 0 ? [2, 6, 10] : []);
+  while (spent < budget - 0.001 && queue.length > 0) {
     if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2 && spent + slice <= budget) {
       middle.push(toSplitItem(queue.shift(), queue.shift(), slice));
       spent += slice; splitsLeft--;
