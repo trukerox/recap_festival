@@ -216,6 +216,10 @@ const TRANSITION_SETS = {
 };
 const DEFAULT_TRANSITION = { effects: ["fade", "dissolve"], effectDur: 0.3, cutDur: 0.06, every: 2 };
 
+// Transitions that read as "soft" — used to decide which beats get a zoom-punch
+// (only the non-soft, flashy ones do).
+const SMOOTH_TRANSITIONS = new Set(["fade", "fadeblack", "fadewhite", "fadeslow", "fadefast", "dissolve"]);
+
 // Build the per-boundary plan ([{ type, dur }] of length n). The boundary INTO
 // the end card always gets a clean dip-to-black so the branded card lands well.
 function buildTransitionPlan(n, style, cardIndex) {
@@ -335,26 +339,46 @@ export async function composeVideo({
   // Real xfade transitions now carry the between-clip energy, so clips stay calm
   // (gentle Ken Burns only) — the old per-cut zoom/slide moves ON TOP of the
   // transitions read as "too much motion". Keep them off.
-  const segments = comp.map((item, index) =>
-    segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50, entrance: "none" }),
-  );
+  // Beat zoom-punch: a subtle zoom-in-and-settle on the ACCENT beats only — the
+  // clips that already get a flashy transition (zoomin/hblur/slide/…). Smooth
+  // transitions (fades/dissolves) and the card don't punch, so calm styles stay
+  // calm and we don't reintroduce the old "constant motion" feel.
+  const segments = comp.map((item, index) => {
+    const inc = plan[index - 1];
+    const accent = index > 0 && inc && !SMOOTH_TRANSITIONS.has(inc.type)
+      && (item.kind === "photo" || item.kind === "video");
+    return segmentFilter({
+      item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50,
+      entrance: accent ? "punch" : "none",
+    });
+  });
   const durations = comp.map((item) => item.duration);
 
   const chain = xfadeChain(segments.map((s) => s.label), durations, plan);
   const joinFilters = chain.filters;
   const totalDuration = chain.totalDuration;
 
-  // Canva-style title block over the opening shot: huge bold "FESTIVAL RECAP",
-  // with the event name + location beneath it.
+  // Canva-style ANIMATED title over the opening shot: bold "FESTIVAL RECAP" +
+  // event name/location beneath, each sliding up as it fades in (staggered) and
+  // fading back out — instead of the old hard pop on/off.
+  // (Vignette PARKED with the grade — re-enable by prefixing the first drawtext
+  //  input with `vignette=angle=PI/4.5,`.)
   const mainPath = await writeTextFile("FESTIVAL RECAP");
   const subPath = await writeTextFile(titleSubText || eventName || "");
   const subY = `h*0.09+${style.titleMainSize + 34}`;
+  const tEnd = TITLE_SECONDS;       // when the title is fully gone
+  const D = 0.35;                    // fade in/out length
+  // alpha ramp: 0 -> 1 over D from tIn, hold, 1 -> 0 over D ending at tEnd
+  const alphaExpr = (tIn) =>
+    `if(lt(t,${tIn}),0,if(lt(t,${tIn}+${D}),(t-${tIn})/${D},if(lt(t,${tEnd}-${D}),1,if(lt(t,${tEnd}),(${tEnd}-t)/${D},0))))`;
+  // y slides up 34px into place over the first 0.4s after tIn
+  const slideY = (baseY, tIn) => `(${baseY})+34*(1-min(1,max(0,(t-${tIn}))/0.4))`;
+  const en = `enable='lt(t,${tEnd})'`;
   const textFilters = [
-    // Vignette PARKED with the grade — re-enable by prefixing `vignette=angle=PI/4.5,`.
     `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${style.titleMainSize}:fontcolor=white:` +
-      `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y=h*0.09:enable='between(t,0,${TITLE_SECONDS})'[vt1]`,
+      `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y='${slideY("h*0.09", 0)}':alpha='${alphaExpr(0)}':${en}[vt1]`,
     `[vt1]drawtext=textfile='${subPath}':fontfile='${FONT_FILE}':fontsize=${style.titleSubSize}:fontcolor=white:` +
-      `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y=${subY}:enable='between(t,0,${TITLE_SECONDS})'[vout]`,
+      `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y='${slideY(subY, 0.25)}':alpha='${alphaExpr(0.25)}':${en}[vout]`,
   ];
 
   // Long fade-out over the last ~2.5s so the music swells down through the end
