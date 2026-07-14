@@ -471,15 +471,20 @@ function videoCard({ title, sub, src, sheet, downloadHref, onDelete, badge }) {
   actions.appendChild(del);
   head.appendChild(actions);
   card.appendChild(head);
-  if (src) {
-    const v = document.createElement('video');
-    v.controls = true; v.preload = 'metadata'; v.src = src; v.className = 'vplayer';
-    card.appendChild(v);
-  }
+  // Show the keyframe sheet immediately (this is how you "see" a recap at a
+  // glance) and load the video ONLY when the user hits play. Eagerly loading
+  // several full <video> elements at once stalls the browser tab — as the recap
+  // list grows this made the Videos tab appear broken / show nothing.
   if (sheet) {
     const img = document.createElement('img');
     img.loading = 'lazy'; img.src = sheet; img.className = 'sheet'; img.alt = 'keyframes';
     card.appendChild(img);
+  }
+  if (src) {
+    const v = document.createElement('video');
+    v.controls = true; v.preload = 'none'; v.src = src; v.className = 'vplayer';
+    if (sheet) v.poster = sheet;
+    card.appendChild(v);
   }
   return card;
 }
