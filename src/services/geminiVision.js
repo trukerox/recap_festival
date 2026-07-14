@@ -56,13 +56,18 @@ async function resolveModel() {
     const names = (data.models || [])
       .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map((m) => String(m.name).replace(/^models\//, ""));
+    // Some listed models are tombstones (e.g. gemini-2.0-flash "no longer
+    // available") — 404 on use. Prefer current 2.5 flash (lite first = cheapest
+    // for bulk tagging) and never fall back to the old 1.0/1.5/2.0 names.
     const stable = (n) => !/(exp|thinking|preview)/i.test(n);
+    const notOld = (n) => !/gemini-(1\.0|1\.5|2\.0)/i.test(n);
     const pick =
-      names.find((n) => n === config.ai.geminiModel) || // honour configured model if usable
-      names.find((n) => /flash-lite/i.test(n) && stable(n)) || // cheapest/fastest for bulk tagging
-      names.find((n) => /flash/i.test(n) && stable(n)) || // stable flash
-      names.find((n) => /flash/i.test(n)) || // any flash
-      names[0] || // anything that can generate
+      (config.ai.geminiModel && names.find((n) => n === config.ai.geminiModel)) || // explicit override only
+      names.find((n) => /2\.5-flash-lite/i.test(n) && stable(n)) ||
+      names.find((n) => /2\.5-flash/i.test(n) && stable(n)) ||
+      names.find((n) => /flash-lite/i.test(n) && stable(n) && notOld(n)) ||
+      names.find((n) => /flash/i.test(n) && stable(n) && notOld(n)) ||
+      names.find((n) => stable(n) && notOld(n)) || // any current model that can generate
       null;
     resolvedModel = pick;
     logger.info({ model: pick, availableCount: names.length }, "gemini model resolved");

@@ -59,7 +59,9 @@ export const config = {
     // the pipeline falls back to the local heuristic scorer — no behaviour
     // change. Key via Docker secret `gemini_api_key` (preferred) or env.
     geminiKey: readSecret("gemini_api_key", { required: false }) || process.env.GEMINI_API_KEY || null,
-    geminiModel: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+    // Only an EXPLICIT override; otherwise the service auto-discovers a current
+    // model (a stale default like gemini-2.0-flash is listed but dead → 404s).
+    geminiModel: process.env.GEMINI_MODEL || null,
   },
 };
 
