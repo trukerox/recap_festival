@@ -633,7 +633,6 @@ async function loadRenders() {
         sub: when,
         badge: j.style ? `style: ${j.style}` : null,
         src: `/api/jobs/${j.id}/video`,
-        sheet: `/api/jobs/${j.id}/frames`,
         downloadHref: `/api/jobs/${j.id}/download`,
         onDelete: async () => {
           if (!confirm('Delete this recap video?')) return;
