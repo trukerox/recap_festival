@@ -22,6 +22,12 @@ function isWide(item, width, height) {
   return item.srcWidth && item.srcHeight && item.srcWidth / item.srcHeight > width / height;
 }
 
+// Every segment MUST end identically formatted or xfade fails with "Error
+// reinitializing filters / Failed to inject frame": same pixel format (the end
+// card PNG is RGBA, video is YUV — the #1 cause here), frame rate, SAR, and
+// timebase. This suffix normalizes all of them.
+const NORM = "format=yuv420p,fps=30,setsar=1,settb=AVTB";
+
 function segmentFilter({ item, index, width, height }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
@@ -34,7 +40,7 @@ function segmentFilter({ item, index, width, height }) {
       filter:
         `[${index}:v]scale=${width}:${height},` +
         `zoompan=z='min(zoom+${zoomStep},1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
-        `setsar=1[${label}]`,
+        `${NORM}[${label}]`,
     };
   }
 
@@ -47,7 +53,7 @@ function segmentFilter({ item, index, width, height }) {
       label,
       filter:
         `[${index}:v]scale=-2:${height},eq=saturation=1.2:contrast=1.04,` +
-        `crop=${width}:${height}:x='(in_w-${width})*${dir}':y=0,setsar=1,fps=30[${label}]`,
+        `crop=${width}:${height}:x='(in_w-${width})*${dir}':y=0,${NORM}[${label}]`,
     };
   }
 
@@ -59,7 +65,7 @@ function segmentFilter({ item, index, width, height }) {
       filter:
         `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
         `zoompan=z='min(zoom+${zoomStep},1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
-        `eq=saturation=1.2:contrast=1.04,setsar=1[${label}]`,
+        `eq=saturation=1.2:contrast=1.04,${NORM}[${label}]`,
     };
   }
 
@@ -69,7 +75,7 @@ function segmentFilter({ item, index, width, height }) {
     filter:
       `[${index}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
       `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
-      `eq=saturation=1.25:contrast=1.05:brightness=0.02,fps=30,setsar=1[${label}]`,
+      `eq=saturation=1.25:contrast=1.05:brightness=0.02,${NORM}[${label}]`,
   };
 }
 
