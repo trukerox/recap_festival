@@ -1,9 +1,9 @@
 // Builds and runs the ffmpeg filter_complex graph that turns a selected
 // timeline (see services/selection.js) into the final 20s 1080x1920 recap:
-// Ken Burns motion on photos (horizontal pan across landscape shots, zoom on
-// portrait), xfade transitions between every segment, color grading, an
-// opening title, a professional branded end card (services/endCard.js), and
-// the chosen music track as the only audio. No floating watermark.
+// Ken Burns motion on photos, xfade transitions between every segment, color
+// grading, an opening title, a professional branded end card
+// (services/endCard.js), and the chosen music track as the only audio. No
+// floating watermark.
 import ffmpeg from "fluent-ffmpeg";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,17 +16,9 @@ const TRANSITION_DURATION = 0.35;
 const TRANSITIONS = ["fade", "wipeleft", "slideup", "circleopen", "wiperight", "slideleft"];
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
-// A source is "wide" (pan it) when it's wider than the 9:16 target aspect —
-// true for almost every non-portrait photo. Portrait shots fall through to the
-// fill-zoom branch instead.
-function isWide(item, width, height) {
-  return item.srcWidth && item.srcHeight && item.srcWidth / item.srcHeight > width / height;
-}
-
 // Every segment MUST end identically formatted or xfade fails with "Error
 // reinitializing filters / Failed to inject frame": same pixel format (the end
-// card PNG is RGBA, video is YUV — the #1 cause here), frame rate, SAR, and
-// timebase. This suffix normalizes all of them.
+// card PNG is RGBA, video is YUV), frame rate, SAR, and timebase.
 const NORM = "format=yuv420p,fps=30,setsar=1,settb=AVTB";
 
 function segmentFilter({ item, index, width, height }) {
@@ -45,28 +37,25 @@ function segmentFilter({ item, index, width, height }) {
     };
   }
 
-  // Landscape photo: horizontal Ken Burns pan across the FULL width. Scale to
-  // the frame height, then slide a 9:16 crop window left→right (or right→left
-  // on odd segments) so the whole scene is revealed instead of centre-cropped.
-  if (item.kind === "photo" && isWide(item, width, height)) {
-    const dir = index % 2 === 0 ? `n/${frames}` : `(1-n/${frames})`;
-    return {
-      label,
-      filter:
-        `[${index}:v]scale=-2:${height},eq=saturation=1.2:contrast=1.04,` +
-        `crop=${width}:${height}:x='(in_w-${width})*${dir}':y=0,${NORM}[${label}]`,
-    };
-  }
-
-  // Portrait/square photo: fill the frame and slow-zoom (classic Ken Burns).
+  // Photo: Ken Burns pan. Scale to COVER a box slightly larger than the frame
+  // (so the crop input is always >= the frame and there's pan room on BOTH
+  // axes), then slide a 1080x1920 crop window. Adapts to the real decoded image
+  // regardless of orientation / EXIF rotation (landscape drifts mostly
+  // horizontally, portrait mostly vertically) and can never crop larger than
+  // the input -- the bug that produced "crop: too big size" when a portrait
+  // shot stored as landscape dims got scaled too narrow. Direction alternates
+  // per segment for variety.
   if (item.kind === "photo") {
-    const zoomStep = (0.2 / frames).toFixed(6);
+    const coverW = Math.round(width * 1.12);
+    const coverH = Math.round(height * 1.12);
+    const p = index % 2 === 0 ? `n/${frames}` : `(1-n/${frames})`;
     return {
       label,
       filter:
-        `[${index}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
-        `zoompan=z='min(zoom+${zoomStep},1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
-        `eq=saturation=1.2:contrast=1.04,${NORM}[${label}]`,
+        `[${index}:v]scale=${coverW}:${coverH}:force_original_aspect_ratio=increase,` +
+        `eq=saturation=1.2:contrast=1.04,` +
+        `crop=${width}:${height}:x='(in_w-${width})*${p}':y='(in_h-${height})*${p}',` +
+        `${NORM}[${label}]`,
     };
   }
 
@@ -162,7 +151,7 @@ export async function composeVideo({
   }
   command.input(musicTrack.file_path);
 
-  // Log the exact input→index mapping so an ffmpeg "stream #N:0" error points
+  // Log the exact input->index mapping so an ffmpeg "stream #N:0" error points
   // straight at a file, and dump the graph + ffmpeg's stderr on failure.
   logger.info(
     {
