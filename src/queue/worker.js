@@ -15,6 +15,7 @@ import { getById as getMusicTrack } from "../repositories/musicTracks.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
 import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
+import { getStyle } from "../services/styles.js";
 
 async function analyzeProjectMedia(projectId) {
   const items = await listByProject(projectId);
@@ -50,9 +51,14 @@ async function processJob(job) {
   const musicTrack = await getMusicTrack(job.music_track_id);
   if (!musicTrack) throw new Error(`Music track ${job.music_track_id} not found`);
 
+  const style = getStyle(job.style);
+  logger.info({ jobId: job.id, style: style.name }, "render style");
+
   const timeline = buildTimeline(scoredRows, {
     bpm: musicTrack.bpm,
     totalDurationSeconds: config.render.durationSeconds,
+    targetSlice: style.targetSlice,
+    closeupBias: style.closeupBias,
   });
   await markSelection(
     project.id,
@@ -64,6 +70,7 @@ async function processJob(job) {
   await composeVideo({
     timeline,
     musicTrack,
+    style,
     eventName: project.event_name,
     titleText: buildTitleText(project),
     outputPath,

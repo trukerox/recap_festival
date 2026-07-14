@@ -10,6 +10,7 @@ import { createJob } from "../repositories/renderJobs.js";
 import { pickForStyle } from "../repositories/musicTracks.js";
 import { probeMedia } from "../services/mediaProbe.js";
 import { sha256File } from "../utils/checksum.js";
+import { pickRandomStyle } from "../services/styles.js";
 
 export const projectsRouter = Router();
 
@@ -114,10 +115,17 @@ projectsRouter.post("/:id/render", async (req, res, next) => {
     }
 
     const body = renderSchema.parse(req.body ?? {});
-    const musicTrackId = body.musicTrackId ?? (await pickForStyle(project.music_style))?.id ?? null;
+
+    // Auto-pick a random edit style so each render looks different. When the
+    // project's music style is "auto", let the chosen style set the music vibe;
+    // otherwise honour the user's explicit music choice.
+    const style = pickRandomStyle();
+    const musicGenre = project.music_style && project.music_style !== "auto" ? project.music_style : style.musicGenre;
+    const musicTrackId =
+      body.musicTrackId ?? (await pickForStyle(musicGenre))?.id ?? (await pickForStyle("auto"))?.id ?? null;
     if (!musicTrackId) throw httpError(503, "No music tracks available — add tracks to the library first");
 
-    const job = await createJob({ projectId: project.id, musicTrackId });
+    const job = await createJob({ projectId: project.id, musicTrackId, style: style.name });
     res.status(202).json(job);
   } catch (err) {
     next(err.issues ? httpError(400, err.issues.map((i) => i.message).join("; ")) : err);

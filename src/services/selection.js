@@ -7,13 +7,13 @@
 const OPENING_SECONDS = 3;
 const CLOSING_SECONDS = 3;
 const MIN_SLICE_SECONDS = 0.7;
-const MAX_SLICE_SECONDS = 2.5;
-const TARGET_SLICE_SECONDS = 1.4;
+const MAX_SLICE_SECONDS = 2.6;
+const DEFAULT_TARGET_SLICE = 1.5;
 
-function beatSnappedSlice(bpm) {
-  if (!bpm) return TARGET_SLICE_SECONDS;
+function beatSnappedSlice(bpm, targetSlice) {
+  if (!bpm) return targetSlice;
   const beatSeconds = 60 / bpm;
-  const beats = Math.max(1, Math.round(TARGET_SLICE_SECONDS / beatSeconds));
+  const beats = Math.max(1, Math.round(targetSlice / beatSeconds));
   return Math.min(MAX_SLICE_SECONDS, Math.max(MIN_SLICE_SECONDS, beats * beatSeconds));
 }
 
@@ -36,8 +36,14 @@ function toTimelineItem(row, role, duration) {
   };
 }
 
-export function buildTimeline(scoredMediaRows, { bpm, totalDurationSeconds }) {
-  const ranked = [...scoredMediaRows].sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0));
+export function buildTimeline(
+  scoredMediaRows,
+  { bpm, totalDurationSeconds, targetSlice = DEFAULT_TARGET_SLICE, closeupBias = 1 },
+) {
+  // Apply the style's close-up bias to the ranking so detail shots (the hero
+  // food/close moments) get featured more in styles that call for it.
+  const scoreOf = (r) => (r.composite_score ?? 0) * (r.shot_type === "close" ? closeupBias : 1);
+  const ranked = [...scoredMediaRows].sort((a, b) => scoreOf(b) - scoreOf(a));
   if (ranked.length < 3) throw new Error("Need at least 3 scored media items to build a timeline");
 
   const opening = ranked[0];
@@ -50,8 +56,9 @@ export function buildTimeline(scoredMediaRows, { bpm, totalDurationSeconds }) {
   const middlePool = ranked.filter((r) => !used.has(r.id));
 
   const middleBudget = Math.max(0, totalDurationSeconds - OPENING_SECONDS - CLOSING_SECONDS);
-  const slice = beatSnappedSlice(bpm);
-  const middleSlots = Math.max(1, Math.floor(middleBudget / slice));
+  const slice = beatSnappedSlice(bpm, targetSlice);
+  // Don't invent more slots than we have footage for.
+  const middleSlots = Math.max(1, Math.min(Math.floor(middleBudget / slice), middlePool.length));
 
   // Alternate wide/close shot types for visual rhythm when both are available;
   // fall back to score order otherwise.

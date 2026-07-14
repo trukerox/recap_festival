@@ -472,6 +472,7 @@ async function loadRenders() {
       box.appendChild(videoCard({
         title: j.event_name || `Recap #${j.id}`,
         sub: when,
+        badge: j.style ? `style: ${j.style}` : null,
         src: `/api/jobs/${j.id}/video`,
         sheet: `/api/jobs/${j.id}/frames`,
         downloadHref: `/api/jobs/${j.id}/download`,

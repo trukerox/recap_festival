@@ -1,9 +1,9 @@
 import { query, queryOne } from "../db/pool.js";
 
-export async function createJob({ projectId, musicTrackId }) {
+export async function createJob({ projectId, musicTrackId, style = null }) {
   const result = await query(
-    "INSERT INTO render_jobs (project_id, music_track_id, status) VALUES (?, ?, 'queued')",
-    [projectId, musicTrackId ?? null],
+    "INSERT INTO render_jobs (project_id, music_track_id, style, status) VALUES (?, ?, ?, 'queued')",
+    [projectId, musicTrackId ?? null, style],
   );
   return getJob(result.insertId);
 }
