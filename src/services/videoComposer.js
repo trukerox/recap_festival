@@ -47,14 +47,16 @@ const PUNCH_FRAMES = 5;
 // Idea from burns' deterministic per-index variation (odd push in / even pull
 // out), extended with directional slides. dz = extra zoom at the cut (decays);
 // dx/dy = offset in output px at the cut (decays); pf = frames to resolve.
+// Moves are deliberately gentle and settle over more frames — aggressive/short
+// moves on every cut read as "too fast" (user feedback). pf = frames to resolve.
 const ENTRANCE_MOVE = {
-  none:     { dz: 0,     dx: 0,    dy: 0,    pf: PUNCH_FRAMES },
-  punch:    { dz: 0.10,  dx: 0,    dy: 0,    pf: 5 },  // slam in, settle
-  pullback: { dz: -0.08, dx: 0,    dy: 0,    pf: 6 },  // start wide, zoom to rest
-  slideL:   { dz: 0.03,  dx: 120,  dy: 0,    pf: 7 },  // whip in from the right
-  slideR:   { dz: 0.03,  dx: -120, dy: 0,    pf: 7 },  // whip in from the left
-  slideU:   { dz: 0.03,  dx: 0,    dy: 120,  pf: 7 },  // push up
-  slideD:   { dz: 0.03,  dx: 0,    dy: -120, pf: 7 },  // push down
+  none:     { dz: 0,     dx: 0,   dy: 0,   pf: PUNCH_FRAMES },
+  punch:    { dz: 0.06,  dx: 0,   dy: 0,   pf: 8 },  // slam in, settle
+  pullback: { dz: -0.05, dx: 0,   dy: 0,   pf: 9 },  // start wide, zoom to rest
+  slideL:   { dz: 0.02,  dx: 80,  dy: 0,   pf: 10 }, // ease in from the right
+  slideR:   { dz: 0.02,  dx: -80, dy: 0,   pf: 10 }, // ease in from the left
+  slideU:   { dz: 0.02,  dx: 0,   dy: 80,  pf: 10 }, // push up
+  slideD:   { dz: 0.02,  dx: 0,   dy: -80, pf: 10 }, // push down
 };
 
 // A no-adjacent-duplicate cycle; a random rotation per render keeps successive
@@ -75,8 +77,11 @@ function assignEntrances(comp, hardCuts) {
       out.push("none");
       continue;
     }
+    // Move on alternate cuts only — the rest are calm static holds (just the
+    // gentle slow zoom), so the reel isn't in constant motion.
+    if (p % 2 === 1) { out.push("none"); p++; continue; }
     let move = ENTRANCE_CYCLE[(start + p) % ENTRANCE_CYCLE.length];
-    if (it.kind === "video" && move.startsWith("slide")) move = p % 2 ? "pullback" : "punch";
+    if (it.kind === "video" && move.startsWith("slide")) move = "punch"; // slides read muddy on moving footage
     out.push(move);
     p++;
   }
@@ -182,7 +187,7 @@ function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
       label,
       filter: kenBurns({
         inputIndex: item.inputIndex, frames, width, height, eq,
-        scaleUp: 1.25, baseZoom: 1.2, slowZoom: 0.06,
+        scaleUp: 1.25, baseZoom: 1.2, slowZoom: 0.035,
         panPx, dir, move, label,
       }),
     };

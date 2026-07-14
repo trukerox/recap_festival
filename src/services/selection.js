@@ -105,6 +105,15 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   const medianGap = gaps.length ? gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)] : 0.5;
   const beatsFor = (seconds) => Math.max(1, Math.round(seconds / medianGap));
 
+  // aubio's beats often peter out partway through a track (quiet section, or it
+  // simply stops locking on). If we only cut on the detected beats, the edit
+  // stops there and the closing shot freezes for the whole remaining time (the
+  // "stuck on one clip" bug). Extend the beat grid on the median tempo up to the
+  // end-card window so cuts keep landing to the end.
+  for (let t = B[B.length - 1] + medianGap; t <= usableEnd; t += medianGap) {
+    B.push(Number(t.toFixed(4)));
+  }
+
   const normalAdvance = beatsFor(targetSlice);
   const heroAdvance = Math.max(normalAdvance, beatsFor(Math.min(MAX_HERO_SECONDS, targetSlice * Math.max(1, heroHold))));
   const split3Advance = beatsFor(SPLIT3_TARGET_SECONDS);
