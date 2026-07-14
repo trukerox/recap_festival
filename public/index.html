@@ -34,6 +34,30 @@
   .btnlink { font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; background: #333; color: #eee; text-decoration: none; }
   .reuse-banner { background: #16261a; border: 1px solid #2e5e3a; padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
   .reuse-actions { display: flex; gap: 8px; margin-top: 0.6rem; flex-wrap: wrap; }
+
+  /* ---- Responsive / touch ---------------------------------------------- */
+  /* 16px on form controls stops iOS auto-zooming the page on focus. */
+  input, select, button { font-size: 16px; }
+  button { min-height: 44px; }              /* comfortable touch target */
+  img, video { max-width: 100%; }
+  /* Wide tables scroll inside their own box rather than squashing the page. */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-wrap table { min-width: 420px; }
+
+  @media (max-width: 640px) {
+    body { margin: 1rem auto; padding: 0 0.75rem; }
+    h1 { font-size: 1.2rem; }
+    fieldset { padding: 0.75rem; margin-bottom: 0.75rem; }
+    .tabs { gap: 0.4rem; }
+    .tabs button { flex: 1; padding: 0.6rem 0.3rem; }   /* full-width, easy to tap */
+    /* Card header stacks so the title isn't crushed by the buttons. */
+    .vcard-head { flex-direction: column; align-items: stretch; gap: 8px; }
+    .vcard-actions { flex-wrap: wrap; }
+    .vcard-actions .btnlink, .vcard-actions button { flex: 1 1 auto; text-align: center; }
+    .vplayer { max-width: 100%; }
+    .reuse-actions button { flex: 1 1 auto; }
+    .btnlink { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  }
 </style>
 </head>
 <body>
@@ -133,10 +157,12 @@
     <fieldset>
       <legend>Library</legend>
       <button id="refreshMusicBtn" class="secondary">Refresh</button>
-      <table id="musicTable">
-        <thead><tr><th>Title</th><th>Genre</th><th>BPM</th><th>Active</th><th>Preview</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+      <div class="table-wrap">
+        <table id="musicTable">
+          <thead><tr><th>Title</th><th>Genre</th><th>BPM</th><th>Active</th><th>Preview</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </fieldset>
   </div>
 
