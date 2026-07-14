@@ -57,6 +57,25 @@ function segmentFilter({ item, index, width, height, grade, panPx }) {
     };
   }
 
+  // 3-panel stacked split (beatcut structure): top/middle/bottom, the middle
+  // panel carrying the hook shot while neighbours swap on the beat.
+  if (item.kind === "split3") {
+    const third = Math.floor(height / 3); // 640 for 1920
+    const pa = `p${index}a`;
+    const pb = `p${index}b`;
+    const pc = `p${index}c`;
+    return {
+      label,
+      filter:
+        panelFilter(item.a, item.a.inputIndex, width, third, eq, pa) +
+        ";" +
+        panelFilter(item.b, item.b.inputIndex, width, third, eq, pb) +
+        ";" +
+        panelFilter(item.c, item.c.inputIndex, width, height - 2 * third, eq, pc) +
+        `;[${pa}][${pb}][${pc}]vstack=inputs=3,${NORM}[${label}]`,
+    };
+  }
+
   // Branded end card: already width x height; give it a subtle slow zoom.
   if (item.kind === "card") {
     const zoomStep = (0.08 / frames).toFixed(6);
@@ -160,25 +179,31 @@ export async function composeVideo({
     // keep the photo closing shot
   }
 
-  // Pad every segment after the first by one transition length. xfade overlaps
-  // each cut by `td`, which would otherwise make the output (n-1)*td shorter
-  // than target; adding it back makes the render hit its full nominal length.
-  comp = comp.map((it, i) => {
-    if (i === 0) return it;
-    const padded = { ...it, duration: it.duration + td };
-    if (it.kind === "split") {
-      padded.a = { ...it.a, duration: it.a.duration + td };
-      padded.b = { ...it.b, duration: it.b.duration + td };
-    }
-    return padded;
-  });
+  const hardCuts = Boolean(style.hardCuts) || td <= 0;
 
-  // Assign ffmpeg input indices (split moments consume two inputs).
+  // xfade overlaps each cut by `td`, which would otherwise make the output
+  // (n-1)*td shorter than target AND slide every cut off the beat grid — so
+  // pad every segment after the first by one transition length. Hard-cut
+  // styles concat instead: no overlap, no padding, cuts land exactly where
+  // selection.js put them (on the beat).
+  if (!hardCuts) {
+    comp = comp.map((it, i) => {
+      if (i === 0) return it;
+      const padded = { ...it, duration: it.duration + td };
+      for (const k of ["a", "b", "c"]) {
+        if (it[k]) padded[k] = { ...it[k], duration: it[k].duration + td };
+      }
+      return padded;
+    });
+  }
+
+  // Assign ffmpeg input indices (split moments consume 2-3 inputs).
   let inputIdx = 0;
   for (const it of comp) {
-    if (it.kind === "split") {
+    if (it.kind === "split" || it.kind === "split3") {
       it.a.inputIndex = inputIdx++;
       it.b.inputIndex = inputIdx++;
+      if (it.kind === "split3") it.c.inputIndex = inputIdx++;
     } else {
       it.inputIndex = inputIdx++;
     }
@@ -189,12 +214,19 @@ export async function composeVideo({
     segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50 }),
   );
   const durations = comp.map((item) => item.duration);
-  const { filters: xfadeFilters, totalDuration } = xfadeChain(
-    segments.map((s) => s.label),
-    durations,
-    style.transitions,
-    td,
-  );
+
+  let joinFilters;
+  let totalDuration;
+  if (hardCuts) {
+    // Instant beat-synced cuts: plain concat of the normalized segments.
+    const labels = segments.map((s) => `[${s.label}]`).join("");
+    joinFilters = [`${labels}concat=n=${segments.length}:v=1:a=0[vmain]`];
+    totalDuration = durations.reduce((s, d) => s + d, 0);
+  } else {
+    const chain = xfadeChain(segments.map((s) => s.label), durations, style.transitions, td);
+    joinFilters = chain.filters;
+    totalDuration = chain.totalDuration;
+  }
 
   // Canva-style title block over the opening shot: huge bold "FESTIVAL RECAP",
   // with the event name + location beneath it.
@@ -215,13 +247,14 @@ export async function composeVideo({
     `[${musicInputIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
     `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}[aout]`;
 
-  const filterGraph = [...segments.map((s) => s.filter), ...xfadeFilters, ...textFilters, audioFilter].join(";");
+  const filterGraph = [...segments.map((s) => s.filter), ...joinFilters, ...textFilters, audioFilter].join(";");
 
   const command = ffmpeg();
   for (const item of comp) {
-    if (item.kind === "split") {
+    if (item.kind === "split" || item.kind === "split3") {
       addInput(command, item.a, item.duration);
       addInput(command, item.b, item.duration);
+      if (item.kind === "split3") addInput(command, item.c, item.duration);
     } else {
       addInput(command, item, item.duration);
     }

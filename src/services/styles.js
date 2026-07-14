@@ -16,6 +16,30 @@
 
 export const STYLES = [
   {
+    // The Canva reference format, reverse-engineered clip-by-clip:
+    // 0-1s hook (full-screen hero close-up + bold text) → ~1-4s a 3-panel
+    // stacked split whose MIDDLE panel stays static while top/bottom swap on
+    // the beat → rapid full-screen HARD cuts (1.0-1.5s, zero transition
+    // effects) → a 0.5s bounce-back to an earlier shot → end card.
+    // Cuts are pure concat (no xfade smear) and every duration is an exact
+    // beat multiple, so cuts land on the kick.
+    name: "beatcut",
+    label: "Canva / Beat-Cut",
+    hardCuts: true, // concat, not xfade — instant cuts
+    transitions: [], // unused with hardCuts
+    transitionDuration: 0,
+    targetSlice: 1.2, // 1.0-1.5s micro-clips, beat-snapped
+    grade: { saturation: 1.35, contrast: 1.06, brightness: 0.03 }, // vibrant realism
+    closeupBias: 1.4,
+    heroHold: 1, // uniform fast pace — no long holds in this format
+    splitMoments: 0, // uses the split3 structure instead of 2-up splits
+    structure: { hook: true, split3: 2, bounceBack: true },
+    musicGenre: "edm",
+    titleMainSize: 96,
+    titleSubSize: 44,
+    panPx: 0, // shots dead still; handheld source motion is the texture
+  },
+  {
     name: "punchy",
     label: "Punchy / Trend",
     transitions: ["fadeblack", "fade", "fadeblack", "fade"], // dips to black on the beat

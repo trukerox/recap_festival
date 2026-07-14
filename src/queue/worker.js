@@ -62,9 +62,12 @@ async function processJob(job) {
     closeupBias: style.closeupBias,
     heroHold: style.heroHold,
     splitMoments: style.splitMoments,
+    structure: style.structure ?? null,
   });
-  // Split-screen entries carry two media items — record both in the selection.
-  const selected = timeline.flatMap((t) => (t.kind === "split" ? [t.a, t.b] : [t]));
+  // Split-screen entries carry 2-3 media items — record all in the selection.
+  const selected = timeline.flatMap((t) =>
+    t.kind === "split3" ? [t.a, t.b, t.c] : t.kind === "split" ? [t.a, t.b] : [t],
+  );
   await markSelection(
     project.id,
     selected.map((t, i) => ({ mediaItemId: t.mediaItemId, order: i })),
