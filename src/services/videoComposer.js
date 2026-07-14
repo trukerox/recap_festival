@@ -95,10 +95,26 @@ function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, sl
   );
 }
 
+// Cohesive cinematic COLOUR grade applied to every photo/video clip (not the
+// branded card). eq lift + a gentle teal-shadow / warm-highlight split-tone via
+// curves — the "why does Canva look graded and ours looks like raw phone photos"
+// layer. Colour-only here (order-independent, safe to run before zoompan); the
+// spatial vignette is applied once to the finished frame instead. Kept moderate
+// so it reads filmic, not like a heavy Instagram filter.
+function gradeChain(grade) {
+  // colorbalance (colon-separated, no spaces — safe inside the filtergraph
+  // string) pushes shadows toward teal and highlights toward warm: the classic
+  // teal-orange festival look.
+  return (
+    `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness},` +
+    `colorbalance=rs=-0.04:bs=0.12:rh=0.10:bh=-0.10`
+  );
+}
+
 function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
-  const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
+  const eq = gradeChain(grade);
 
   // Split-screen moment: two clips stacked vertically (Canva-style geometry).
   if (item.kind === "split") {
@@ -333,7 +349,10 @@ export async function composeVideo({
   const subPath = await writeTextFile(titleSubText || eventName || "");
   const subY = `h*0.09+${style.titleMainSize + 34}`;
   const textFilters = [
-    `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${style.titleMainSize}:fontcolor=white:` +
+    // A soft vignette on the finished frame (applied once here, not per-clip, so
+    // it doesn't drift with the pan) — the last bit of cinematic polish. Title
+    // is drawn on top so it stays bright.
+    `[vmain]vignette=angle=PI/4.5,drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${style.titleMainSize}:fontcolor=white:` +
       `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y=h*0.09:enable='between(t,0,${TITLE_SECONDS})'[vt1]`,
     `[vt1]drawtext=textfile='${subPath}':fontfile='${FONT_FILE}':fontsize=${style.titleSubSize}:fontcolor=white:` +
       `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y=${subY}:enable='between(t,0,${TITLE_SECONDS})'[vout]`,
