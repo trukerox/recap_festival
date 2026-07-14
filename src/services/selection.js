@@ -1,13 +1,17 @@
-// Turns scored media into the 20s timeline structure the brief describes:
-//   0-3s   strong opening shot (highest-scoring clip/photo)
-//   3-17s  fast-paced highlights, alternating wide/close shots where possible
-//   17-20s final emotional shot (held for the CTA overlay)
-// Clip lengths in the highlight section are snapped to the music's beat grid
-// so cuts land on-beat ("fast cuts synchronized with music").
+// Turns scored media into the recap timeline:
+//   0-3s    strong opening shot (highest-scoring item) under the title card
+//   middle  highlights — beat-snapped cuts, hero holds on close-ups, and
+//           optional split-screen moments (two clips stacked), per style
+//   last 3s branded end card (composer swaps the closing slot for it)
+//
+// Canva-derived pacing rules: close-up "hero" shots (food, faces) get held
+// noticeably longer than crowd shots; split-screen moments add playful
+// geometry in styles that call for them.
 const OPENING_SECONDS = 3;
 const CLOSING_SECONDS = 3;
 const MIN_SLICE_SECONDS = 0.7;
 const MAX_SLICE_SECONDS = 2.6;
+const MAX_HERO_SECONDS = 2.8;
 const DEFAULT_TARGET_SLICE = 1.5;
 
 function beatSnappedSlice(bpm, targetSlice) {
@@ -26,8 +30,6 @@ function toTimelineItem(row, role, duration) {
     role,
     duration,
     shotType: row.shot_type,
-    // Source dimensions so the composer can pan landscape photos across their
-    // width instead of center-cropping them (see videoComposer.segmentFilter).
     srcWidth: row.width ?? null,
     srcHeight: row.height ?? null,
     // For video, trim to the pre-scored best window, but never exceed `duration`.
@@ -36,9 +38,27 @@ function toTimelineItem(row, role, duration) {
   };
 }
 
+// A split-screen moment: two clips stacked vertically for one slice.
+function toSplitItem(rowA, rowB, duration) {
+  return {
+    kind: "split",
+    role: "highlight",
+    duration,
+    a: toTimelineItem(rowA, "split-panel", duration),
+    b: toTimelineItem(rowB, "split-panel", duration),
+  };
+}
+
 export function buildTimeline(
   scoredMediaRows,
-  { bpm, totalDurationSeconds, targetSlice = DEFAULT_TARGET_SLICE, closeupBias = 1 },
+  {
+    bpm,
+    totalDurationSeconds,
+    targetSlice = DEFAULT_TARGET_SLICE,
+    closeupBias = 1,
+    heroHold = 1,
+    splitMoments = 0,
+  },
 ) {
   // Apply the style's close-up bias to the ranking so detail shots (the hero
   // food/close moments) get featured more in styles that call for it.
@@ -55,35 +75,62 @@ export function buildTimeline(
   const used = new Set([opening.id, closing.id]);
   const middlePool = ranked.filter((r) => !used.has(r.id));
 
-  const middleBudget = Math.max(0, totalDurationSeconds - OPENING_SECONDS - CLOSING_SECONDS);
-  const slice = beatSnappedSlice(bpm, targetSlice);
-  // Don't invent more slots than we have footage for.
-  const middleSlots = Math.max(1, Math.min(Math.floor(middleBudget / slice), middlePool.length));
-
-  // Alternate wide/close shot types for visual rhythm when both are available;
-  // fall back to score order otherwise.
+  // Interleave wide/close/other for visual rhythm, as before.
   const wide = middlePool.filter((r) => r.shot_type === "wide");
   const close = middlePool.filter((r) => r.shot_type === "close");
   const other = middlePool.filter((r) => r.shot_type !== "wide" && r.shot_type !== "close");
-  const interleaved = [];
+  const queue = [];
   let wi = 0, ci = 0, oi = 0;
-  while (interleaved.length < middleSlots && (wi < wide.length || ci < close.length || oi < other.length)) {
-    if (wi < wide.length) interleaved.push(wide[wi++]);
-    if (interleaved.length < middleSlots && ci < close.length) interleaved.push(close[ci++]);
-    if (interleaved.length < middleSlots && oi < other.length) interleaved.push(other[oi++]);
+  while (wi < wide.length || ci < close.length || oi < other.length) {
+    if (wi < wide.length) queue.push(wide[wi++]);
+    if (ci < close.length) queue.push(close[ci++]);
+    if (oi < other.length) queue.push(other[oi++]);
   }
-  const middle = interleaved.slice(0, middleSlots);
 
-  // Distribute any leftover seconds (from flooring) across the last middle
-  // slot and the closing shot so the timeline sums exactly to the target.
-  const usedMiddle = middle.length * slice;
-  const leftover = middleBudget - usedMiddle;
+  const middleBudget = Math.max(0, totalDurationSeconds - OPENING_SECONDS - CLOSING_SECONDS);
+  const slice = beatSnappedSlice(bpm, targetSlice);
+  const heroSlice = Math.min(MAX_HERO_SECONDS, slice * Math.max(1, heroHold));
 
-  const timeline = [
+  // Fill the middle greedily: close-ups get hero holds, and split-screen
+  // moments are dropped in at spaced slot positions while footage allows.
+  const middle = [];
+  let spent = 0;
+  let slot = 0;
+  let splitsLeft = Math.max(0, splitMoments);
+  const splitSlots = new Set(splitMoments > 0 ? [2, 6, 10] : []);
+
+  while (queue.length > 0 && spent + MIN_SLICE_SECONDS <= middleBudget) {
+    if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2 && spent + slice <= middleBudget) {
+      const a = queue.shift();
+      const b = queue.shift();
+      middle.push(toSplitItem(a, b, slice));
+      spent += slice;
+      splitsLeft--;
+    } else {
+      const row = queue.shift();
+      const isHero = row.shot_type === "close";
+      const dur = Math.min(isHero ? heroSlice : slice, middleBudget - spent);
+      if (dur < MIN_SLICE_SECONDS) break;
+      middle.push(toTimelineItem(row, "highlight", dur));
+      spent += dur;
+    }
+    slot++;
+  }
+
+  // Absorb any leftover seconds into the last middle entry so the timeline
+  // sums exactly to the target.
+  const leftover = middleBudget - spent;
+  if (middle.length > 0 && leftover > 0.01) {
+    middle[middle.length - 1].duration += leftover;
+    if (middle[middle.length - 1].kind === "split") {
+      middle[middle.length - 1].a.duration += leftover;
+      middle[middle.length - 1].b.duration += leftover;
+    }
+  }
+
+  return [
     toTimelineItem(opening, "opening", OPENING_SECONDS),
-    ...middle.map((row, i) => toTimelineItem(row, "highlight", slice + (i === middle.length - 1 ? leftover : 0))),
+    ...middle,
     toTimelineItem(closing, "closing", CLOSING_SECONDS),
   ];
-
-  return timeline;
 }

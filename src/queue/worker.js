@@ -33,7 +33,8 @@ async function analyzeProjectMedia(projectId) {
   }
 }
 
-function buildTitleText(project) {
+// Subtitle under the big "FESTIVAL RECAP" heading: event name, then location.
+function buildTitleSub(project) {
   const parts = [project.event_name];
   if (project.location) parts.push(project.location);
   return parts.join("\n");
@@ -59,10 +60,14 @@ async function processJob(job) {
     totalDurationSeconds: config.render.durationSeconds,
     targetSlice: style.targetSlice,
     closeupBias: style.closeupBias,
+    heroHold: style.heroHold,
+    splitMoments: style.splitMoments,
   });
+  // Split-screen entries carry two media items — record both in the selection.
+  const selected = timeline.flatMap((t) => (t.kind === "split" ? [t.a, t.b] : [t]));
   await markSelection(
     project.id,
-    timeline.map((t, i) => ({ mediaItemId: t.mediaItemId, order: i })),
+    selected.map((t, i) => ({ mediaItemId: t.mediaItemId, order: i })),
   );
 
   await updateStatus(job.id, "rendering");
@@ -72,7 +77,7 @@ async function processJob(job) {
     musicTrack,
     style,
     eventName: project.event_name,
-    titleText: buildTitleText(project),
+    titleSubText: buildTitleSub(project),
     outputPath,
     onProgress: (p) => {
       // p.percent is unreliable for filter_complex graphs (ffmpeg can't always

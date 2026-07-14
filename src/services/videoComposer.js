@@ -1,9 +1,10 @@
 // Builds and runs the ffmpeg filter_complex graph that turns a selected
 // timeline (services/selection.js) into the final vertical recap, applying a
-// randomly-chosen edit STYLE (services/styles.js): its transitions, transition
-// length, colour grade and title size. Ken Burns motion on photos, an opening
-// title, a branded end card (services/endCard.js), and the chosen music track
-// as the only audio. No floating watermark.
+// randomly-chosen edit STYLE (services/styles.js): transitions + length,
+// colour grade, gentle photo drift, hero-held close-ups, optional
+// split-screen moments, and a bold Canva-style title block
+// ("FESTIVAL RECAP" + event name/location) over the opening shot. Ends on the
+// branded end card (services/endCard.js); the music track is the only audio.
 import ffmpeg from "fluent-ffmpeg";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,16 +15,47 @@ import { generateEndCard } from "./endCard.js";
 import { getStyle } from "./styles.js";
 
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+const TITLE_SECONDS = 3.2;
 
 // Every segment MUST end identically formatted or xfade fails with "Error
 // reinitializing filters / Failed to inject frame": same pixel format (the end
 // card PNG is RGBA, video is YUV), frame rate, SAR, and timebase.
 const NORM = "format=yuv420p,fps=30,setsar=1,settb=AVTB";
 
+// One half of a split-screen: cover-crop a source into a width x height panel.
+function panelFilter(sub, inputIndex, width, height, eq, outLabel) {
+  if (sub.kind === "video") {
+    return (
+      `[${inputIndex}:v]trim=0:${sub.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+      `crop=${width}:${height},${eq}[${outLabel}]`
+    );
+  }
+  return (
+    `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+    `crop=${width}:${height},${eq}[${outLabel}]`
+  );
+}
+
 function segmentFilter({ item, index, width, height, grade, panPx }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
   const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
+
+  // Split-screen moment: two clips stacked vertically (Canva-style geometry).
+  if (item.kind === "split") {
+    const half = height / 2;
+    const pa = `p${index}a`;
+    const pb = `p${index}b`;
+    return {
+      label,
+      filter:
+        panelFilter(item.a, item.a.inputIndex, width, half, eq, pa) +
+        ";" +
+        panelFilter(item.b, item.b.inputIndex, width, half, eq, pb) +
+        `;[${pa}][${pb}]vstack=inputs=2,${NORM}[${label}]`,
+    };
+  }
 
   // Branded end card: already width x height; give it a subtle slow zoom.
   if (item.kind === "card") {
@@ -31,7 +63,7 @@ function segmentFilter({ item, index, width, height, grade, panPx }) {
     return {
       label,
       filter:
-        `[${index}:v]scale=${width}:${height},` +
+        `[${item.inputIndex}:v]scale=${width}:${height},` +
         `zoompan=z='min(zoom+${zoomStep},1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=30,` +
         `${NORM}[${label}]`,
     };
@@ -40,18 +72,16 @@ function segmentFilter({ item, index, width, height, grade, panPx }) {
   // Photo: gentle Ken Burns drift, Canva-style — the shot stays essentially
   // still and the CUTS carry the energy. The crop window starts centered and
   // drifts at most `panPx` pixels over the whole slice (clipped to the image so
-  // it can never overrun, whatever the orientation/EXIF rotation). The old
-  // full-width sweep panned thousands of pixels per second and read as dizzy.
+  // it can never overrun, whatever the orientation/EXIF rotation).
   if (item.kind === "photo") {
     const coverW = Math.round(width * 1.08);
     const coverH = Math.round(height * 1.08);
     const dir = index % 2 === 0 ? 1 : -1;
-    // progress runs -0.5 → +0.5 across the slice; offset = dir * progress * panPx
     const xExpr = `clip((in_w-${width})/2 + ${dir * panPx}*(n/${frames}-0.5), 0, in_w-${width})`;
     return {
       label,
       filter:
-        `[${index}:v]scale=${coverW}:${coverH}:force_original_aspect_ratio=increase,${eq},` +
+        `[${item.inputIndex}:v]scale=${coverW}:${coverH}:force_original_aspect_ratio=increase,${eq},` +
         `crop=${width}:${height}:x='${xExpr}':y='(in_h-${height})/2',` +
         `${NORM}[${label}]`,
     };
@@ -61,7 +91,7 @@ function segmentFilter({ item, index, width, height, grade, panPx }) {
   return {
     label,
     filter:
-      `[${index}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `[${item.inputIndex}:v]trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,` +
       `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},` +
       `${eq},${NORM}[${label}]`,
   };
@@ -91,12 +121,24 @@ async function writeTextFile(text) {
   return path;
 }
 
+// Adds an input to the ffmpeg command for one media source and returns nothing;
+// stills loop for the segment duration, videos seek to their scored window.
+function addInput(command, sub, duration) {
+  if (sub.kind === "video") {
+    command
+      .input(sub.storedPath)
+      .inputOptions([`-ss ${(sub.trimStart ?? 0).toFixed(3)}`, `-t ${duration.toFixed(3)}`]);
+  } else {
+    command.input(sub.storedPath).inputOptions(["-loop 1", "-r 30", `-t ${duration.toFixed(3)}`]);
+  }
+}
+
 export async function composeVideo({
   timeline,
   musicTrack,
   style: styleArg,
   eventName,
-  titleText,
+  titleSubText,
   outputPath,
   onProgress,
 }) {
@@ -109,19 +151,39 @@ export async function composeVideo({
   // rsvg-convert isn't available, fall back to the originally-selected closing
   // shot so a render still succeeds (just without the designed card).
   let endCardPath = null;
-  let comp = timeline;
+  let comp = timeline.map((it) => ({ ...it }));
   try {
     endCardPath = await generateEndCard({ eventName, width, height });
-    const lastIdx = timeline.length - 1;
-    comp = timeline.map((it, i) => (i === lastIdx ? { ...it, kind: "card", storedPath: endCardPath, trimStart: null } : it));
+    const last = comp[comp.length - 1];
+    comp[comp.length - 1] = { ...last, kind: "card", storedPath: endCardPath, trimStart: null };
   } catch {
-    comp = timeline;
+    // keep the photo closing shot
   }
 
   // Pad every segment after the first by one transition length. xfade overlaps
   // each cut by `td`, which would otherwise make the output (n-1)*td shorter
   // than target; adding it back makes the render hit its full nominal length.
-  comp = comp.map((it, i) => (i === 0 ? it : { ...it, duration: it.duration + td }));
+  comp = comp.map((it, i) => {
+    if (i === 0) return it;
+    const padded = { ...it, duration: it.duration + td };
+    if (it.kind === "split") {
+      padded.a = { ...it.a, duration: it.a.duration + td };
+      padded.b = { ...it.b, duration: it.b.duration + td };
+    }
+    return padded;
+  });
+
+  // Assign ffmpeg input indices (split moments consume two inputs).
+  let inputIdx = 0;
+  for (const it of comp) {
+    if (it.kind === "split") {
+      it.a.inputIndex = inputIdx++;
+      it.b.inputIndex = inputIdx++;
+    } else {
+      it.inputIndex = inputIdx++;
+    }
+  }
+  const musicInputIndex = inputIdx;
 
   const segments = comp.map((item, index) =>
     segmentFilter({ item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50 }),
@@ -134,13 +196,16 @@ export async function composeVideo({
     td,
   );
 
-  const titlePath = await writeTextFile(titleText);
-  const musicInputIndex = comp.length; // music is the input after all media
-
-  // Opening title only (0-3s); the CTA now lives on the end card.
+  // Canva-style title block over the opening shot: huge bold "FESTIVAL RECAP",
+  // with the event name + location beneath it.
+  const mainPath = await writeTextFile("FESTIVAL RECAP");
+  const subPath = await writeTextFile(titleSubText || eventName || "");
+  const subY = `h*0.09+${style.titleMainSize + 34}`;
   const textFilters = [
-    `[vmain]drawtext=textfile='${titlePath}':fontfile='${FONT_FILE}':fontsize=${style.titleFontSize}:fontcolor=white:` +
-      `borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,3)'[vout]`,
+    `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${style.titleMainSize}:fontcolor=white:` +
+      `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y=h*0.09:enable='between(t,0,${TITLE_SECONDS})'[vt1]`,
+    `[vt1]drawtext=textfile='${subPath}':fontfile='${FONT_FILE}':fontsize=${style.titleSubSize}:fontcolor=white:` +
+      `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y=${subY}:enable='between(t,0,${TITLE_SECONDS})'[vout]`,
   ];
 
   // Long fade-out over the last ~2.5s so the music swells down through the end
@@ -154,12 +219,11 @@ export async function composeVideo({
 
   const command = ffmpeg();
   for (const item of comp) {
-    if (item.kind === "photo" || item.kind === "card") {
-      command.input(item.storedPath).inputOptions(["-loop 1", "-r 30", `-t ${item.duration.toFixed(3)}`]);
+    if (item.kind === "split") {
+      addInput(command, item.a, item.duration);
+      addInput(command, item.b, item.duration);
     } else {
-      command
-        .input(item.storedPath)
-        .inputOptions([`-ss ${(item.trimStart ?? 0).toFixed(3)}`, `-t ${item.duration.toFixed(3)}`]);
+      addInput(command, item, item.duration);
     }
   }
   command.input(musicTrack.file_path);
@@ -167,9 +231,9 @@ export async function composeVideo({
   logger.info(
     {
       style: style.name,
-      inputs: comp.map((it, i) => ({ i, kind: it.kind, dur: it.duration })),
+      segments: comp.map((it, i) => ({ i, kind: it.kind, dur: Number(it.duration.toFixed(2)) })),
       musicIndex: musicInputIndex,
-      totalDuration,
+      totalDuration: Number(totalDuration.toFixed(2)),
     },
     "ffmpeg inputs",
   );
@@ -208,7 +272,8 @@ export async function composeVideo({
     });
   } finally {
     await Promise.all([
-      unlink(titlePath).catch(() => {}),
+      unlink(mainPath).catch(() => {}),
+      unlink(subPath).catch(() => {}),
       endCardPath ? unlink(endCardPath).catch(() => {}) : Promise.resolve(),
     ]);
   }
