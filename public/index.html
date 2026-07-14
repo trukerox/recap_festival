@@ -512,6 +512,7 @@ async function loadReferences() {
       title: c.name,
       sub: `${fmtBytes(c.sizeBytes)} · ${new Date(c.uploadedAt).toLocaleString()}`,
       src: `/api/reference/${encodeURIComponent(c.name)}/video`,
+      sheet: `/api/reference/${encodeURIComponent(c.name)}/frames`,
       badge: 'reference',
       onDelete: async () => {
         if (!confirm(`Delete reference clip "${c.name}"?`)) return;

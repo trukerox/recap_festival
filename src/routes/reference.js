@@ -7,6 +7,7 @@ import { join, resolve, basename } from "node:path";
 import config from "../config/index.js";
 import { httpError } from "../middleware/errorHandler.js";
 import { referenceUpload } from "../middleware/upload.js";
+import { makeContactSheet } from "../services/contactSheet.js";
 
 export const referenceRouter = Router();
 
@@ -42,6 +43,19 @@ referenceRouter.post("/", referenceUpload.single("video"), (req, res, next) => {
   try {
     if (!req.file) throw httpError(400, "No video uploaded (form field 'video')");
     res.status(201).json({ name: basename(req.file.path) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Keyframe contact sheet for a reference clip (same as renders).
+referenceRouter.get("/:name/frames", async (req, res, next) => {
+  try {
+    const sheet = await makeContactSheet(resolve(safeRefPath(req.params.name)));
+    res.sendFile(sheet, (err) => {
+      unlink(sheet).catch(() => {});
+      if (err && !res.headersSent) next(httpError(404, "Clip not found"));
+    });
   } catch (err) {
     next(err);
   }
