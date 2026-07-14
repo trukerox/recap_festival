@@ -50,6 +50,18 @@ export async function markSelection(projectId, selections) {
   }
 }
 
+// Clears cached scores for a project so the next render re-analyses every item
+// from scratch (e.g. after enabling Gemini tagging). Returns rows removed.
+export async function deleteScoresForProject(projectId) {
+  const result = await query(
+    `DELETE ms FROM media_scores ms
+     JOIN media_items mi ON mi.id = ms.media_item_id
+     WHERE mi.project_id = ?`,
+    [projectId],
+  );
+  return result.affectedRows ?? 0;
+}
+
 export async function listScoresForProject(projectId) {
   return query(
     `SELECT mi.*, ms.*

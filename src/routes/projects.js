@@ -6,6 +6,7 @@ import { httpError } from "../middleware/errorHandler.js";
 import { mediaUpload, kindForMime } from "../middleware/upload.js";
 import { createProject, getProject, setWatermark, updateProject } from "../repositories/projects.js";
 import { insertMediaItem, listByProject, countByProject } from "../repositories/mediaItems.js";
+import { deleteScoresForProject } from "../repositories/mediaScores.js";
 import { createJob } from "../repositories/renderJobs.js";
 import { pickForStyle } from "../repositories/musicTracks.js";
 import { probeMedia } from "../services/mediaProbe.js";
@@ -122,6 +123,19 @@ projectsRouter.post(
     }
   },
 );
+
+// Clear cached scores so the next render re-analyses from scratch — used to
+// re-score an existing project after enabling Gemini (avoids re-uploading).
+projectsRouter.post("/:id/reanalyze", async (req, res, next) => {
+  try {
+    const project = await getProject(req.params.id);
+    if (!project) throw httpError(404, "Project not found");
+    const cleared = await deleteScoresForProject(project.id);
+    res.json({ ok: true, cleared });
+  } catch (err) {
+    next(err);
+  }
+});
 
 const renderSchema = z.object({
   musicTrackId: z.number().int().positive().optional(),

@@ -50,6 +50,7 @@
       <span id="reuseText"></span>
       <div class="reuse-actions">
         <button id="reuseRenderBtn">Re-render this project</button>
+        <button id="reanalyzeBtn" class="secondary" title="Re-score all shots (picks up AI tagging if enabled). The next render will re-analyze.">Re-analyze shots</button>
         <button id="startFreshBtn" class="secondary">Start fresh</button>
       </div>
     </div>
@@ -208,6 +209,20 @@ async function restoreProject() {
 }
 
 $('reuseRenderBtn').addEventListener('click', () => $('renderBtn').click());
+$('reanalyzeBtn').addEventListener('click', async () => {
+  if (!projectId) return;
+  $('reanalyzeBtn').disabled = true;
+  const prev = $('reanalyzeBtn').textContent;
+  $('reanalyzeBtn').textContent = 'Clearing…';
+  try {
+    const r = await fetch(`/api/projects/${projectId}/reanalyze`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    $('reanalyzeBtn').textContent = r.ok
+      ? `Cleared ${d.cleared ?? ''} — next render re-analyzes`
+      : 'Failed';
+  } catch { $('reanalyzeBtn').textContent = 'Failed'; }
+  setTimeout(() => { $('reanalyzeBtn').textContent = prev; $('reanalyzeBtn').disabled = false; }, 3500);
+});
 $('startFreshBtn').addEventListener('click', () => {
   clearSavedProject();
   projectId = null; jobId = null;
