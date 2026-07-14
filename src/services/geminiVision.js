@@ -106,7 +106,8 @@ export async function tagImage(imagePath) {
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      logger.warn({ status: res.status }, "gemini tag request failed");
+      const errBody = await res.text().catch(() => "");
+      logger.warn({ status: res.status, model, body: errBody.slice(0, 400) }, "gemini tag request failed");
       return null;
     }
     const data = await res.json();
