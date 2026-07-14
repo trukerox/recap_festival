@@ -69,6 +69,7 @@
       <label>Photos/videos (JPEG, PNG, WEBP, MP4, MOV)<input id="mediaFiles" type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime"></label>
       <label>Logo/watermark (optional)<input id="watermarkFile" type="file" accept="image/*"></label>
       <progress id="uploadProgress" value="0" max="100" class="hidden"></progress>
+      <div id="uploadStatus" class="muted"></div>
       <button id="uploadBtn">Upload</button>
     </fieldset>
 
@@ -288,14 +289,33 @@ $('uploadBtn').addEventListener('click', () => {
   const xhr = new XMLHttpRequest();
   const bar = $('uploadProgress');
   bar.classList.remove('hidden');
+  // Block rendering until the server confirms the files are stored — the bar
+  // hitting 100% only means the bytes were sent, not that they're inserted yet.
+  $('uploadBtn').disabled = true;
+  $('renderBtn').disabled = true;
+  $('reuseRenderBtn').disabled = true;
+  $('uploadStatus').textContent = 'Uploading…';
   xhr.upload.addEventListener('progress', (e) => {
-    if (e.lengthComputable) bar.value = Math.round((e.loaded / e.total) * 100);
+    if (e.lengthComputable) {
+      bar.value = Math.round((e.loaded / e.total) * 100);
+      if (bar.value >= 100) $('uploadStatus').textContent = `Processing ${files.length} files on the server…`;
+    }
   });
   xhr.addEventListener('load', () => {
     if (xhr.status >= 200 && xhr.status < 300) {
+      const saved = (() => { try { return JSON.parse(xhr.responseText).saved?.length; } catch { return null; } })();
+      $('uploadStatus').textContent = `✔ ${saved ?? files.length} photo/clips ready.`;
       $('step-render').classList.remove('hidden');
-      $('uploadBtn').disabled = true;
+      $('renderBtn').disabled = false;
+      $('reuseRenderBtn').disabled = false;
+      if (!$('reuseBanner').classList.contains('hidden')) {
+        $('reuseText').textContent = `Reusing “${$('eventName').value || 'this project'}” — ${saved ?? files.length} photo/clips ready. Hit re-render.`;
+      }
     } else {
+      $('uploadStatus').textContent = '';
+      $('uploadBtn').disabled = false;
+      $('renderBtn').disabled = false;
+      $('reuseRenderBtn').disabled = false;
       alert('Upload failed: ' + xhr.responseText);
     }
   });
@@ -303,8 +323,27 @@ $('uploadBtn').addEventListener('click', () => {
   xhr.send(form);
 });
 
+// Fresh server-side media count — the upload's progress bar reaching 100% only
+// means the bytes were sent; the server still has to probe + insert each file.
+// Rendering before that finishes was hitting "need at least 3".
+async function projectMediaCount(pid) {
+  try {
+    const r = await fetch(`/api/projects/${pid}`);
+    if (!r.ok) return 0;
+    const p = await r.json();
+    return Array.isArray(p.media) ? p.media.length : 0;
+  } catch { return 0; }
+}
+
 $('renderBtn').addEventListener('click', async () => {
+  if (!projectId) return alert('Create or reuse a project first.');
   $('renderBtn').disabled = true;
+  const n = await projectMediaCount(projectId);
+  if (n < 3) {
+    $('status').innerHTML = `<span class="error">Only ${n} photo/clip${n === 1 ? '' : 's'} uploaded so far. Upload at least 3 — and if an upload is still running, give it a moment to finish, then try again.</span>`;
+    $('renderBtn').disabled = false;
+    return;
+  }
   const res = await fetch(`/api/projects/${projectId}/render`, { method: 'POST' });
   if (!res.ok) {
     $('status').innerHTML = `<span class="error">${await res.text()}</span>`;
