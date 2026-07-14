@@ -366,9 +366,16 @@ export async function composeVideo({
   //  input with `vignette=angle=PI/4.5,`.)
   // The director's hook (e.g. "BEST NIGHT EVER") becomes the bold opening line
   // when present; otherwise the generic "FESTIVAL RECAP".
-  const mainPath = await writeTextFile((hook || "FESTIVAL RECAP").toUpperCase());
+  const mainText = (hook || "FESTIVAL RECAP").toUpperCase();
+  const mainPath = await writeTextFile(mainText);
   const subPath = await writeTextFile(titleSubText || eventName || "");
-  const subY = `h*0.09+${style.titleMainSize + 34}`;
+  // Auto-shrink the title so a long hook (e.g. "SUMMER FESTIVAL MAGIC!") fits
+  // the frame width instead of running off both edges. ~0.62 = rough advance
+  // width per char for DejaVu Sans Bold (uppercase), as a fraction of fontsize.
+  const maxTitleW = width * 0.92;
+  const fitSize = Math.floor(maxTitleW / Math.max(1, mainText.length * 0.62));
+  const titleMainSize = Math.max(40, Math.min(style.titleMainSize, fitSize));
+  const subY = `h*0.09+${titleMainSize + 34}`;
   const tEnd = TITLE_SECONDS;       // when the title is fully gone
   const D = 0.35;                    // fade in/out length
   // alpha ramp: 0 -> 1 over D from tIn, hold, 1 -> 0 over D ending at tEnd
@@ -378,7 +385,7 @@ export async function composeVideo({
   const slideY = (baseY, tIn) => `(${baseY})+34*(1-min(1,max(0,(t-${tIn}))/0.4))`;
   const en = `enable='lt(t,${tEnd})'`;
   const textFilters = [
-    `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${style.titleMainSize}:fontcolor=white:` +
+    `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${titleMainSize}:fontcolor=white:` +
       `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y='${slideY("h*0.09", 0)}':alpha='${alphaExpr(0)}':${en}[vt1]`,
     `[vt1]drawtext=textfile='${subPath}':fontfile='${FONT_FILE}':fontsize=${style.titleSubSize}:fontcolor=white:` +
       `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y='${slideY(subY, 0.25)}':alpha='${alphaExpr(0.25)}':${en}[vout]`,
