@@ -56,9 +56,11 @@ async function resolveModel() {
     const names = (data.models || [])
       .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map((m) => String(m.name).replace(/^models\//, ""));
+    const stable = (n) => !/(exp|thinking|preview)/i.test(n);
     const pick =
       names.find((n) => n === config.ai.geminiModel) || // honour configured model if usable
-      names.find((n) => /flash/i.test(n) && !/(exp|thinking|preview)/i.test(n)) || // stable flash
+      names.find((n) => /flash-lite/i.test(n) && stable(n)) || // cheapest/fastest for bulk tagging
+      names.find((n) => /flash/i.test(n) && stable(n)) || // stable flash
       names.find((n) => /flash/i.test(n)) || // any flash
       names[0] || // anything that can generate
       null;
