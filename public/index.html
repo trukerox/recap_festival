@@ -49,15 +49,8 @@
       <label>Event name *<input id="eventName" required></label>
       <label>Location<input id="location"></label>
       <label>Date<input id="eventDate" type="date"></label>
-      <label>Music style
-        <select id="musicStyle">
-          <option value="auto">Auto (recommended)</option>
-          <option value="festival">Festival</option>
-          <option value="edm">EDM</option>
-          <option value="electronic">Electronic</option>
-          <option value="pop">Pop</option>
-          <option value="cinematic">Cinematic</option>
-        </select>
+      <label>Music style (type a genre you have in the library — e.g. reggae — or "auto")
+        <input id="musicStyle" list="genreSuggestions" value="auto" placeholder="auto (recommended)">
       </label>
       <button id="createProjectBtn">Create project</button>
     </fieldset>
@@ -179,6 +172,20 @@ $('tabVideosBtn').addEventListener('click', () => switchTab('videos'));
 fetch('/api/config').then((r) => r.json()).then((c) => {
   if (c && c.renderDurationSeconds) $('renderBtn').textContent = `Generate ${c.renderDurationSeconds}s recap video`;
 }).catch(() => {});
+
+// Add the genres actually present in the library to the suggestion datalist,
+// so the music-style field suggests genres you have tracks for.
+function refreshGenreSuggestions() {
+  fetch('/api/music/all').then((r) => r.json()).then((tracks) => {
+    if (!Array.isArray(tracks)) return;
+    const dl = $('genreSuggestions');
+    const have = new Set([...dl.options].map((o) => o.value.toLowerCase()));
+    for (const g of new Set(tracks.map((t) => (t.genre || '').toLowerCase()).filter(Boolean))) {
+      if (!have.has(g)) { const o = document.createElement('option'); o.value = g; dl.appendChild(o); }
+    }
+  }).catch(() => {});
+}
+refreshGenreSuggestions();
 
 function switchTab(name) {
   $('tab-recap').classList.toggle('hidden', name !== 'recap');

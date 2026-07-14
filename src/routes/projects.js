@@ -18,7 +18,9 @@ const createProjectSchema = z.object({
   eventName: z.string().min(1).max(255),
   location: z.string().max(255).optional(),
   eventDate: z.string().date().optional(), // "YYYY-MM-DD"
-  musicStyle: z.enum(["electronic", "edm", "festival", "pop", "cinematic", "auto"]).optional(),
+  // Free text so any library genre (reggae, latin, …) can be requested;
+  // "auto" (or blank) lets the random edit style choose the vibe.
+  musicStyle: z.string().trim().max(32).transform((s) => s.toLowerCase()).optional(),
   ctaText: z.string().max(255).optional(),
 });
 

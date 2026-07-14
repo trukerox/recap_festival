@@ -64,17 +64,22 @@ export async function updateFields(id, { bpm, genre } = {}) {
   return getById(id);
 }
 
-// "auto" (or an unrecognised style) picks any active track — the festival/edm
-// tracks are weighted first since they best match the brief's default mood.
+// Picks an active track matching the requested genre. FIRST tries an exact
+// match on whatever genre string is passed — ANY free text (reggae, latin,
+// hip-hop …), not just the 5 style-vibe buckets — so an explicit genre choice
+// is honoured. Only when there's no such track does it fall back through the
+// default festival-mood ordering, then any active track. "auto" skips the
+// direct match and goes straight to the mood fallback.
 export async function pickForStyle(style) {
-  const preferredOrder = ["festival", "edm", "electronic", "pop", "cinematic"];
-  if (style && preferredOrder.includes(style)) {
+  const requested = style ? String(style).trim().toLowerCase() : "";
+  if (requested && requested !== "auto") {
     const rows = await query(
       "SELECT * FROM music_tracks WHERE active = 1 AND genre = ? ORDER BY RAND() LIMIT 1",
-      [style],
+      [requested],
     );
     if (rows[0]) return rows[0];
   }
+  const preferredOrder = ["festival", "edm", "electronic", "pop", "cinematic"];
   for (const genre of preferredOrder) {
     const rows = await query(
       "SELECT * FROM music_tracks WHERE active = 1 AND genre = ? ORDER BY RAND() LIMIT 1",
