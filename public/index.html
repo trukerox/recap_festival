@@ -32,6 +32,8 @@
   .sheet { width: 100%; max-width: 640px; border-radius: 6px; margin-top: 10px; display: block; }
   .badge { font-size: 0.7rem; background: #6d5dfc; color: white; padding: 1px 7px; border-radius: 10px; vertical-align: middle; }
   .btnlink { font-size: 0.85rem; padding: 6px 12px; border-radius: 6px; background: #333; color: #eee; text-decoration: none; }
+  .reuse-banner { background: #16261a; border: 1px solid #2e5e3a; padding: 0.7rem 0.9rem; border-radius: 8px; margin-bottom: 1rem; }
+  .reuse-actions { display: flex; gap: 8px; margin-top: 0.6rem; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -44,6 +46,13 @@
   </div>
 
   <div id="tab-recap">
+    <div id="reuseBanner" class="hidden reuse-banner">
+      <span id="reuseText"></span>
+      <div class="reuse-actions">
+        <button id="reuseRenderBtn">Re-render this project</button>
+        <button id="startFreshBtn" class="secondary">Start fresh</button>
+      </div>
+    </div>
     <fieldset id="step-project">
       <legend>1. Event details</legend>
       <label>Event name *<input id="eventName" required></label>
@@ -164,6 +173,53 @@ const $ = (id) => document.getElementById(id);
 let projectId = null;
 let jobId = null;
 
+// Persist the current project across browser refreshes (a deploy + hard-refresh
+// used to wipe it, forcing a full re-upload). We only store the id; the server
+// is the source of truth for its media, so on load we re-fetch and — if it
+// still has enough media — jump straight to the render step (no re-upload).
+const LS_PROJECT = 'festivalrecap.projectId';
+function saveProject(id) { try { localStorage.setItem(LS_PROJECT, String(id)); } catch {} }
+function clearSavedProject() { try { localStorage.removeItem(LS_PROJECT); } catch {} }
+
+async function restoreProject() {
+  let saved;
+  try { saved = localStorage.getItem(LS_PROJECT); } catch { saved = null; }
+  if (!saved) return;
+  let proj;
+  try {
+    const r = await fetch(`/api/projects/${saved}`);
+    if (!r.ok) throw new Error('gone');
+    proj = await r.json();
+  } catch { clearSavedProject(); return; } // project no longer exists — forget it
+  projectId = proj.id;
+  const mediaCount = Array.isArray(proj.media) ? proj.media.length : 0;
+  $('eventName').value = proj.event_name || '';
+  $('location').value = proj.location || '';
+  if (proj.music_style) $('musicStyle').value = proj.music_style;
+  $('reuseText').textContent =
+    `Reusing “${proj.event_name}” — ${mediaCount} photo/clip${mediaCount === 1 ? '' : 's'} already uploaded.` +
+    (mediaCount >= 3 ? ' Just hit re-render — no need to upload again.' : ' Add a few more, then render.');
+  $('reuseBanner').classList.remove('hidden');
+  $('createProjectBtn').disabled = true;
+  $('step-upload').classList.remove('hidden');
+  if (mediaCount >= 3) { $('uploadBtn').disabled = true; $('step-render').classList.remove('hidden'); }
+}
+
+$('reuseRenderBtn').addEventListener('click', () => $('renderBtn').click());
+$('startFreshBtn').addEventListener('click', () => {
+  clearSavedProject();
+  projectId = null; jobId = null;
+  $('reuseBanner').classList.add('hidden');
+  $('createProjectBtn').disabled = false;
+  $('uploadBtn').disabled = false;
+  $('step-upload').classList.add('hidden');
+  $('step-render').classList.add('hidden');
+  $('status').textContent = '';
+  $('preview').classList.add('hidden');
+  $('downloadLink').classList.add('hidden');
+  for (const id of ['eventName', 'location', 'eventDate', 'mediaFiles']) $(id).value = '';
+});
+
 $('tabRecapBtn').addEventListener('click', () => switchTab('recap'));
 $('tabMusicBtn').addEventListener('click', () => switchTab('music'));
 $('tabVideosBtn').addEventListener('click', () => switchTab('videos'));
@@ -186,6 +242,7 @@ function refreshGenreSuggestions() {
   }).catch(() => {});
 }
 refreshGenreSuggestions();
+restoreProject();
 
 function switchTab(name) {
   $('tab-recap').classList.toggle('hidden', name !== 'recap');
@@ -215,6 +272,7 @@ $('createProjectBtn').addEventListener('click', async () => {
   if (!res.ok) return alert('Failed to create project: ' + (await res.text()));
   const project = await res.json();
   projectId = project.id;
+  saveProject(project.id); // survive a browser refresh so you can re-render
   $('step-upload').classList.remove('hidden');
   $('createProjectBtn').disabled = true;
 });
