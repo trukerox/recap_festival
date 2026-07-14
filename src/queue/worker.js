@@ -12,6 +12,7 @@ import { listByProject } from "../repositories/mediaItems.js";
 import { getScore, listScoresForProject, markSelection } from "../repositories/mediaScores.js";
 import { claimNextQueuedJob, updateStatus, markProgress, markDone, markFailed } from "../repositories/renderJobs.js";
 import { getById as getMusicTrack } from "../repositories/musicTracks.js";
+import { detectBeats } from "../services/bpmDetect.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
 import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
@@ -53,9 +54,14 @@ async function processJob(job) {
   if (!musicTrack) throw new Error(`Music track ${job.music_track_id} not found`);
 
   const style = getStyle(job.style);
-  logger.info({ jobId: job.id, style: style.name }, "render style");
+
+  // Detect the ACTUAL beat timestamps in the chosen track so cuts land on the
+  // real kicks (not a fixed grid). Falls back to the BPM grid if aubio can't.
+  const { beats } = await detectBeats(musicTrack.file_path);
+  logger.info({ jobId: job.id, style: style.name, beatsDetected: beats.length }, "render style");
 
   const timeline = buildTimeline(scoredRows, {
+    beats,
     bpm: musicTrack.bpm,
     totalDurationSeconds: config.render.durationSeconds,
     targetSlice: style.targetSlice,

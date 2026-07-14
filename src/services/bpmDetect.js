@@ -144,6 +144,32 @@ export async function detectBpm(filePath) {
   return { bpm: foldTempo(result.bpm), confidence: result.confidence, source: "autocorrelation" };
 }
 
+// Detects the ACTUAL beat timestamps (seconds) in a track via aubio — the
+// caller cuts ON these so the edit lands on the real kicks, not a fixed grid
+// from t=0 (which ignores the song's intro and any drift). Returns
+// { beats: number[], bpm } or { beats: [] } if aubio is unavailable/failed.
+// Analyses the whole track (unlike detectBpm's 30s window) so beats cover the
+// full render length.
+export async function detectBeats(filePath) {
+  const wav = join(config.paths.tmpDir, `${randomUUID()}.wav`);
+  try {
+    await execFileAsync("ffmpeg", ["-v", "error", "-i", filePath, "-ac", "1", "-ar", "22050", wav], {
+      timeout: 90_000,
+    });
+    const { stdout } = await execFileAsync("python3", [AUBIO_SCRIPT, wav], {
+      timeout: 90_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout);
+    const beats = Array.isArray(parsed?.beats) ? parsed.beats.filter((b) => Number.isFinite(b)) : [];
+    return { beats, bpm: parsed?.bpm ? foldTempo(parsed.bpm) : null };
+  } catch {
+    return { beats: [], bpm: null };
+  } finally {
+    await unlink(wav).catch(() => {});
+  }
+}
+
 // Rough genre-typical tempo, NOT a measurement — used only as the fallback
 // when detectBpm() can't produce a value (e.g. a track too short to analyse).
 // Always presented as editable, never as fact.

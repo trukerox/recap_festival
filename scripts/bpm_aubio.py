@@ -10,7 +10,12 @@ median inter-beat interval, plus a confidence derived from how consistent
 those intervals are.
 
 Usage:  python3 bpm_aubio.py <wav_path>
-Output (stdout JSON): {"bpm": <int|null>, "confidence": <float 0..1>}
+Output (stdout JSON): {"bpm": <int|null>, "confidence": <float 0..1>,
+                       "beats": [<beat time in seconds>, ...]}
+
+The "beats" array is the actual detected beat times — the caller cuts ON these
+so the edit is synced to the real kicks (not a fixed grid from t=0, which
+ignores the song's intro and drift).
 """
 import sys
 import json
@@ -39,17 +44,17 @@ def main():
     while True:
         samples, read = src()
         if tempo(samples):
-            beats.append(tempo.get_last_s())
+            beats.append(round(float(tempo.get_last_s()), 4))
         if read < HOP_SIZE:
             break
 
     if len(beats) < 4:
-        print(json.dumps({"bpm": None, "confidence": 0.0}))
+        print(json.dumps({"bpm": None, "confidence": 0.0, "beats": beats}))
         return
 
     intervals = [b - a for a, b in zip(beats[:-1], beats[1:]) if (b - a) > 0]
     if not intervals:
-        print(json.dumps({"bpm": None, "confidence": 0.0}))
+        print(json.dumps({"bpm": None, "confidence": 0.0, "beats": beats}))
         return
 
     median_interval = statistics.median(intervals)
@@ -63,7 +68,7 @@ def main():
     else:
         confidence = 0.3
 
-    print(json.dumps({"bpm": round(bpm), "confidence": round(confidence, 3)}))
+    print(json.dumps({"bpm": round(bpm), "confidence": round(confidence, 3), "beats": beats}))
 
 
 if __name__ == "__main__":

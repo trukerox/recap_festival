@@ -42,8 +42,9 @@ export const STYLES = [
   {
     name: "punchy",
     label: "Punchy / Trend",
-    transitions: ["fadeblack", "fade", "fadeblack", "fade"], // dips to black on the beat
-    transitionDuration: 0.25,
+    hardCuts: true, // instant cuts on the beat
+    transitions: [],
+    transitionDuration: 0,
     targetSlice: 1.2, // fast cuts
     grade: { saturation: 1.3, contrast: 1.08, brightness: 0.02 },
     closeupBias: 1.35,
@@ -72,8 +73,9 @@ export const STYLES = [
   {
     name: "dynamic",
     label: "Dynamic / Motion",
-    transitions: ["slideleft", "slideup", "slideright", "circleopen"],
-    transitionDuration: 0.35,
+    hardCuts: true, // instant cuts on the beat
+    transitions: [],
+    transitionDuration: 0,
     targetSlice: 1.5,
     grade: { saturation: 1.25, contrast: 1.05, brightness: 0.02 },
     closeupBias: 1.2,
@@ -87,8 +89,9 @@ export const STYLES = [
   {
     name: "clean",
     label: "Clean / Minimal",
-    transitions: ["fade", "fade", "fadeblack"],
-    transitionDuration: 0.35,
+    hardCuts: true, // instant cuts on the beat
+    transitions: [],
+    transitionDuration: 0,
     targetSlice: 1.7,
     grade: { saturation: 1.18, contrast: 1.04, brightness: 0.0 },
     closeupBias: 1.0,
