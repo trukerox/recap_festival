@@ -17,6 +17,7 @@ import { detectBeats } from "../services/bpmDetect.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
 import { extractFrame } from "../services/frameExtract.js";
 import { directEdit } from "../services/geminiDirector.js";
+import { notifyRenderDone, notifyRenderFailed } from "../services/notify.js";
 import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
 import { getStyle } from "../services/styles.js";
@@ -77,6 +78,7 @@ function buildTitleSub(project) {
 }
 
 async function processJob(job) {
+  const startedMs = Date.now();
   const project = await getProject(job.project_id);
   if (!project) throw new Error(`Project ${job.project_id} not found`);
 
@@ -145,7 +147,10 @@ async function processJob(job) {
   });
 
   await markDone(job.id, outputPath);
-  logger.info({ jobId: job.id, outputPath }, "render complete");
+  const seconds = Math.round((Date.now() - startedMs) / 1000);
+  logger.info({ jobId: job.id, outputPath, seconds }, "render complete");
+  // Fire-and-forget: a notification must never delay or fail a finished render.
+  notifyRenderDone({ jobId: job.id, eventName: project.event_name, style: style.name, seconds }).catch(() => {});
 }
 
 export function startWorkerLoop() {
@@ -164,6 +169,9 @@ export function startWorkerLoop() {
         } catch (err) {
           logger.error({ err, jobId: job.id }, "render job failed");
           await markFailed(job.id, err.message).catch(() => {});
+          // Worth a ping too — a failure you don't hear about is worse than one
+          // you do. Best-effort, never rethrows.
+          notifyRenderFailed({ jobId: job.id, error: err.message }).catch(() => {});
         }
       }
     } catch (err) {

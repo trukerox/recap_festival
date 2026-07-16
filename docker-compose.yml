@@ -14,11 +14,19 @@
 # pattern as job_search, which also skips Redis).
 #
 # SECRETS (Docker secret file mounts → read by src/utils/secrets.js):
-#   db_password     → MariaDB `festival_recap` user password
-#   jwt_secret      → session/download-link signing key (openssl rand -hex 32)
-#   gemini_api_key  → Gemini vision key for AI shot tagging (aistudio.google.com)
-#                     NB: the file MUST exist or `docker compose up` fails — leave
-#                     it EMPTY to disable AI tagging (falls back to heuristics).
+#   db_password         → MariaDB `festival_recap` user password
+#   jwt_secret          → session/download-link signing key (openssl rand -hex 32)
+#   gemini_api_key      → Gemini key for the AI director (aistudio.google.com)
+#   telegram_bot_token  → "render done" ping: bot token from @BotFather
+#   telegram_chat_id    → "render done" ping: your chat id (from @userinfobot)
+#
+# ⚠ EVERY secret file listed at the bottom MUST EXIST or `docker compose up`
+#   refuses to start the whole service. Leave a file EMPTY to disable just that
+#   feature (empty gemini_api_key → heuristics only; empty telegram_* → no
+#   pings). Create them all before deploying:
+#     cd ~/docker/festival_recap
+#     : > secrets/telegram_bot_token.txt && : > secrets/telegram_chat_id.txt
+#     chmod 600 secrets/*.txt
 #
 # FIRST RUN:
 #   1) Create DB + user in MariaDB (see scripts/sql/000_create_db_user.sql)
@@ -45,10 +53,21 @@ services:
       DB_HOST: mariadb
       DB_NAME: festival_recap
       DB_USER: festival_recap
+      # Scratch space in RAM instead of the USB/SD-backed volume: every render
+      # writes a decoded WAV (beat detection), extracted frames and the end-card
+      # PNG here, then deletes them. Keeping that churn off the disk avoids the
+      # I/O bottleneck and the write wear. server.js mkdir -p's this on startup.
+      TMP_DIR: /dev/shm/festival_recap
+    # Docker's default /dev/shm is only 64MB — too small for a whole-track WAV
+    # plus frames, and renders would fail. Peak use is ~20-30MB; 512m is ample
+    # headroom and it's RAM the Pi 5 (8GB) can spare.
+    shm_size: 512m
     secrets:
       - db_password
       - jwt_secret
       - gemini_api_key
+      - telegram_bot_token
+      - telegram_chat_id
     volumes:
       # Uploads + rendered output + scratch render workspace. Persist across
       # rebuilds; uploads/renders should be included in backups, tmp can be
@@ -97,6 +116,10 @@ secrets:
     file: ./secrets/jwt_secret.txt
   gemini_api_key:
     file: ./secrets/gemini_api_key.txt
+  telegram_bot_token:
+    file: ./secrets/telegram_bot_token.txt
+  telegram_chat_id:
+    file: ./secrets/telegram_chat_id.txt
 
 # `web` is created by the Caddy/MariaDB stack; it is shared and external here.
 networks:

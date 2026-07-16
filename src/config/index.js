@@ -54,6 +54,13 @@ export const config = {
 
   retentionDays: int(process.env.RETENTION_DAYS, 14),
 
+  notify: {
+    // Optional Telegram "render done" ping. Both come from Docker secrets; with
+    // either missing, notifications are simply off (renders are unaffected).
+    telegramToken: readSecret("telegram_bot_token", { required: false }) || null,
+    telegramChatId: readSecret("telegram_chat_id", { required: false }) || null,
+  },
+
   ai: {
     // Optional Gemini vision for smarter shot selection (Phase 2). With no key
     // the pipeline falls back to the local heuristic scorer — no behaviour
