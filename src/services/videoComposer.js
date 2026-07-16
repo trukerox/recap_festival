@@ -40,6 +40,11 @@ function panelFilter(sub, inputIndex, width, height, eq, outLabel) {
 // Default entrance length: the move resolves over this many frames at the cut.
 const PUNCH_FRAMES = 5;
 
+// Backdrop blur strength for the 9:16 conversion (see blurredFit). boxblur is
+// cheap enough for the Pi; power=2 is two passes, which reads as a soft bokeh
+// rather than a smear.
+const BLUR_RADIUS = 20;
+
 // Entrance-move palette — the fix for "same transition all over". Each clip
 // enters with a DIFFERENT eased move that resolves within a handful of frames
 // (so the cut still lands ON the beat), giving per-cut variety without any
@@ -90,6 +95,46 @@ function kenBurns({ inputIndex, frames, width, height, eq, scaleUp, baseZoom, sl
   return (
     `[${inputIndex}:v]${extra}scale=${canW}:${canH}:force_original_aspect_ratio=increase,` +
     `crop=${canW}:${canH},${eq},` +
+    `zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${width}x${height}:fps=30,` +
+    `${NORM}[${label}]`
+  );
+}
+
+// Blurred-background 9:16 conversion — the standard Shorts/Reels treatment for
+// media that isn't already vertical. A cover-cropped, blurred, slightly darkened
+// copy of the shot fills the frame, and the WHOLE shot is fitted on top, centred.
+// Landscape photos previously lost ~68% of their width to the cover crop; now the
+// whole scene is visible.
+//
+// Geometry: the bg covers the zoompan canvas (scaleUp x frame); the fg is fitted
+// to the FINAL frame size and centred on that canvas. So at baseZoom (== scaleUp)
+// zoompan shows exactly the fg's box — the shot is fully visible, and the slow
+// zoom / entrance move only nibble its edges.
+//
+// Applied to EVERY photo on purpose: when a shot already fills 9:16 the fitted fg
+// covers the frame and the blur is never seen. That avoids special-casing on
+// orientation — which we can't trust anyway, since EXIF-rotated images report
+// pre-rotation dimensions (sharp said 4000x1844 while ffmpeg auto-rotated to
+// portrait, and that mismatch previously crashed the crop).
+// No drift here: the shot is fitted, so sliding it around just looks like it's
+// slipping. The slow zoom + entrance move carry the life.
+function blurredFit({ inputIndex, index, frames, width, height, eq, scaleUp, baseZoom, slowZoom, move, label }) {
+  const canW = Math.round(width * scaleUp);
+  const canH = Math.round(height * scaleUp);
+  const m = move || ENTRANCE_MOVE.none;
+  const prog = `(on/${frames})`;
+  const decay = `max(0,(${m.pf}-on))/${m.pf}`;
+  const z = `${baseZoom}${term(slowZoom, prog)}${term(m.dz, decay)}`;
+  const x = `(iw-iw/zoom)/2${term(m.dx, decay)}`;
+  const y = `(ih-ih/zoom)/2${term(m.dy, decay)}`;
+  const bg = `bg${index}`, fg = `fg${index}`, bgb = `bgb${index}`, fgs = `fgs${index}`;
+  return (
+    `[${inputIndex}:v]split=2[${bg}][${fg}];` +
+    `[${bg}]scale=${canW}:${canH}:force_original_aspect_ratio=increase,crop=${canW}:${canH},` +
+    `boxblur=luma_radius=${BLUR_RADIUS}:luma_power=2:chroma_radius=${BLUR_RADIUS}:chroma_power=1,` +
+    `eq=brightness=-0.06[${bgb}];` + // darken the backdrop so the shot pops
+    `[${fg}]scale=${width}:${height}:force_original_aspect_ratio=decrease[${fgs}];` +
+    `[${bgb}][${fgs}]overlay=(W-w)/2:(H-h)/2,${eq},` +
     `zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${width}x${height}:fps=30,` +
     `${NORM}[${label}]`
   );
@@ -164,15 +209,16 @@ function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
   // Photo: eased Ken Burns — a slow zoom-in + smooth bounded drift so the shot
   // feels alive (not the old mechanical linear sweep), plus a varied ENTRANCE
   // move (punch / pull-back / slide) that resolves on the beat, so no two cuts
-  // feel the same. Larger scaleUp gives the slides room before zoompan clamps.
+  // feel the same.
+  // baseZoom MUST equal scaleUp so zoompan's window is exactly the frame — i.e.
+  // exactly the fitted shot — with the blurred backdrop filling the rest.
   if (item.kind === "photo") {
-    const dir = index % 2 === 0 ? 1 : -1;
     return {
       label,
-      filter: kenBurns({
-        inputIndex: item.inputIndex, frames, width, height, eq,
-        scaleUp: 1.25, baseZoom: 1.2, slowZoom: 0.035,
-        panPx, dir, move, label,
+      filter: blurredFit({
+        inputIndex: item.inputIndex, index, frames, width, height, eq,
+        scaleUp: 1.25, baseZoom: 1.25, slowZoom: 0.035,
+        move, label,
       }),
     };
   }
