@@ -44,7 +44,7 @@ How THIS engine works, so plan within it:
 - Order for retention: OPEN on the single most eye-catching shot (role "opener"); build energy through the middle (role "highlight"); END on a satisfying shot (role "closer").
 - For each selected clip give: its index, its role, and an OPTIONAL on-screen caption (max 4 words, punchy — omit when a shot needs none).
 - "effect": VIDEO clips only. "slowmo" plays the moment at half speed for drama — reserve it for at most 2 genuinely strong MOTION moments (a jump, confetti, a crowd surge); everything else "none". Photos are always "none". Only "none" and "slowmo" exist — any other value crashes the renderer.
-- "hook": a 2-5 word bold on-screen opening line for the first ~1.5s.
+- "hook": the bold on-screen opening line. 2-4 words, MAX 18 CHARACTERS — it's set huge, and a longer hook has to shrink to fit, which kills its impact. "BREZELFEST 2026" or "BEST NIGHT EVER", not "Festival Fun Unleashed!".
 - "mood": one or two words (e.g. "high-energy", "warm nostalgic").
 
 Respond with JSON only. Use each clip index at most once. Select roughly ${Math.max(8, Math.round(seconds * 0.7))}-${n} clips.`;

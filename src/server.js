@@ -53,7 +53,13 @@ async function start() {
 
   const server = app.listen(config.port, () => {
     logger.info(
-      { port: config.port, env: config.env, aiTagging: Boolean(config.ai.geminiKey), geminiModel: config.ai.geminiModel },
+      {
+        port: config.port,
+        env: config.env,
+        aiTagging: Boolean(config.ai.geminiKey),
+        geminiModel: config.ai.geminiModel,
+        notify: Boolean(config.notify.telegramToken && config.notify.telegramChatId),
+      },
       "festival_recap listening",
     );
   });

@@ -45,6 +45,10 @@ const PUNCH_FRAMES = 5;
 // rather than a smear.
 const BLUR_RADIUS = 20;
 
+// Evestival brand orange — same value as the end card (services/endCard.js), so
+// the title's event line and the closing CTA read as one brand.
+const BRAND_ORANGE = "0xE07A1E";
+
 // Entrance-move palette — the fix for "same transition all over". Each clip
 // enters with a DIFFERENT eased move that resolves within a handful of frames
 // (so the cut still lands ON the beat), giving per-cut variety without any
@@ -437,16 +441,36 @@ export async function composeVideo({
   //  input with `vignette=angle=PI/4.5,`.)
   // The director's hook (e.g. "BEST NIGHT EVER") becomes the bold opening line
   // when present; otherwise the generic "FESTIVAL RECAP".
+  // Every drawtext line is written to a temp file; track them all so none leak
+  // (the count now varies with how many sub-lines the project has).
+  const textFiles = [];
+  const textFile = async (s) => {
+    const p = await writeTextFile(s);
+    textFiles.push(p);
+    return p;
+  };
+
   const mainText = (hook || "FESTIVAL RECAP").toUpperCase();
-  const mainPath = await writeTextFile(mainText);
-  const subPath = await writeTextFile(titleSubText || eventName || "");
-  // Auto-shrink the title so a long hook (e.g. "SUMMER FESTIVAL MAGIC!") fits
-  // the frame width instead of running off both edges. ~0.62 = rough advance
-  // width per char for DejaVu Sans Bold (uppercase), as a fraction of fontsize.
-  const maxTitleW = width * 0.92;
-  const fitSize = Math.floor(maxTitleW / Math.max(1, mainText.length * 0.62));
+  const mainPath = await textFile(mainText);
+  // buildTitleSub joins "event\nlocation" — split so each line gets its own
+  // weight/colour (the event name carries the brand orange).
+  const subLines = String(titleSubText || eventName || "").split("\n").map((s) => s.trim()).filter(Boolean);
+  const eventLine = subLines[0] || "";
+  const locLine = subLines.slice(1).join(" · ");
+
+  // Auto-shrink so a long hook fits instead of running off both edges. CHAR_ADV
+  // is the rough advance width per char for this font (uppercase), as a fraction
+  // of fontsize. 0.62 was measured too low — "FESTIVAL FUN UNLEASHED!" rendered
+  // edge-to-edge — so it's 0.70 with a 90% width budget: better a slightly
+  // smaller title than a clipped one. (drawtext can't size itself: fontsize
+  // takes no expression, so text_w is only knowable after the fact.)
+  const CHAR_ADV = 0.7;
+  const maxTitleW = width * 0.9;
+  const fitSize = Math.floor(maxTitleW / Math.max(1, mainText.length * CHAR_ADV));
   const titleMainSize = Math.max(40, Math.min(style.titleMainSize, fitSize));
-  const subY = `h*0.09+${titleMainSize + 34}`;
+  const eventSize = style.titleSubSize + 4;
+  const locSize = Math.max(26, style.titleSubSize - 8);
+
   const tEnd = TITLE_SECONDS;       // when the title is fully gone
   const D = 0.35;                    // fade in/out length
   // alpha ramp: 0 -> 1 over D from tIn, hold, 1 -> 0 over D ending at tEnd
@@ -455,12 +479,39 @@ export async function composeVideo({
   // y slides up 34px into place over the first 0.4s after tIn
   const slideY = (baseY, tIn) => `(${baseY})+34*(1-min(1,max(0,(t-${tIn}))/0.4))`;
   const en = `enable='lt(t,${tEnd})'`;
-  const textFilters = [
-    `[vmain]drawtext=textfile='${mainPath}':fontfile='${FONT_FILE}':fontsize=${titleMainSize}:fontcolor=white:` +
-      `borderw=4:bordercolor=black@0.65:x=(w-text_w)/2:y='${slideY("h*0.09", 0)}':alpha='${alphaExpr(0)}':${en}[vt1]`,
-    `[vt1]drawtext=textfile='${subPath}':fontfile='${FONT_FILE}':fontsize=${style.titleSubSize}:fontcolor=white:` +
-      `borderw=3:bordercolor=black@0.65:line_spacing=10:x=(w-text_w)/2:y='${slideY(subY, 0.25)}':alpha='${alphaExpr(0.25)}':${en}[vout]`,
-  ];
+
+  // A heavier treatment than plain white + a hairline outline, which vanished
+  // into busy festival shots: thick dark outline AND an offset drop shadow, so
+  // the text reads over anything.
+  const drawText = ({ path, size, color, y, tIn, borderw }) =>
+    `drawtext=textfile='${path}':fontfile='${FONT_FILE}':fontsize=${size}:fontcolor=${color}:` +
+    `borderw=${borderw}:bordercolor=black@0.8:shadowcolor=black@0.55:shadowx=3:shadowy=3:` +
+    `x=(w-text_w)/2:y='${slideY(y, tIn)}':alpha='${alphaExpr(tIn)}':${en}`;
+
+  // Chain the lines, staggered, so they cascade in rather than popping together.
+  const textFilters = [];
+  let cur = "vmain";
+  const chainText = (filter) => {
+    const next = `vt${textFilters.length + 1}`;
+    textFilters.push(`[${cur}]${filter}[${next}]`);
+    cur = next;
+  };
+
+  chainText(drawText({ path: mainPath, size: titleMainSize, color: "white", y: "h*0.09", tIn: 0, borderw: 6 }));
+  let nextY = `h*0.09+${titleMainSize + 26}`;
+  if (eventLine) {
+    chainText(
+      drawText({ path: await textFile(eventLine), size: eventSize, color: BRAND_ORANGE, y: nextY, tIn: 0.2, borderw: 4 }),
+    );
+    nextY = `h*0.09+${titleMainSize + 26 + eventSize + 8}`;
+  }
+  if (locLine) {
+    chainText(
+      drawText({ path: await textFile(locLine), size: locSize, color: "white@0.85", y: nextY, tIn: 0.32, borderw: 3 }),
+    );
+  }
+  // Always land on [vout] whatever got chained (null = free passthrough rename).
+  textFilters.push(`[${cur}]null[vout]`);
 
   // Long fade-out over the last ~2.5s so the music swells down through the end
   // card (dramatic lead-in to the evestival.com CTA).
@@ -527,8 +578,7 @@ export async function composeVideo({
     });
   } finally {
     await Promise.all([
-      unlink(mainPath).catch(() => {}),
-      unlink(subPath).catch(() => {}),
+      ...textFiles.map((p) => unlink(p).catch(() => {})),
       endCardPath ? unlink(endCardPath).catch(() => {}) : Promise.resolve(),
     ]);
   }
