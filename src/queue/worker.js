@@ -177,6 +177,7 @@ async function processJob(job) {
     titleSubText: buildTitleSub(project),
     hook: directorPlan?.hook ?? null,
     boundaryEnergies,
+    drop,
     outputPath,
     onProgress: (p) => {
       // Estimate from output time processed (timemark "HH:MM:SS.xx"), which

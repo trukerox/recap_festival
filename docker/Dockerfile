@@ -22,6 +22,10 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY src ./src
 COPY scripts ./scripts
 COPY public ./public
+# Display font for titles (Anton, SIL OFL — licence committed alongside) and the
+# transition sound-effects kit (royalty-free, layered under the music).
+COPY fonts ./fonts
+COPY sfx ./sfx
 RUN mkdir -p /app/music && chown node:node /app/music
 
 # Runtime data dir (mounted as a volume in compose; created for local runs too).

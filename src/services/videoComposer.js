@@ -7,6 +7,7 @@
 // branded end card (services/endCard.js); the music track is the only audio.
 import ffmpeg from "fluent-ffmpeg";
 import { writeFile, unlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import config from "../config/index.js";
@@ -15,7 +16,30 @@ import { generateEndCard } from "./endCard.js";
 import { getStyle } from "./styles.js";
 
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+// The hook is set in Anton (bundled in fonts/, SIL OFL) — a heavy condensed
+// poster face; DejaVu is a system fallback font and reads bland as a title.
+// Sub-lines stay DejaVu Bold: classic display/text pairing. Falls back cleanly
+// if the image predates the font (deploy without --force-rebuild).
+const ANTON_FILE = join(process.cwd(), "fonts", "Anton-Regular.ttf");
+const HAVE_ANTON = existsSync(ANTON_FILE);
 const TITLE_SECONDS = 3.2;
+
+// Sound-effects kit (sfx/, baked into the image): whoosh under flashy
+// transitions, impact + riser around the drop. All optional — a missing file
+// just means that layer is skipped.
+const SFX_DIR = join(process.cwd(), "sfx");
+const sfxPath = (name) => {
+  const p = join(SFX_DIR, name);
+  return existsSync(p) ? p : null;
+};
+const SFX_VOL = { whoosh: 0.4, impact: 0.9, riser: 0.55 };
+const MAX_WHOOSHES = 8;
+
+function probeDuration(path) {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(path, (err, data) => resolve(err ? null : Number(data?.format?.duration) || null));
+  });
+}
 
 // Every segment MUST end identically formatted or xfade fails with "Error
 // reinitializing filters / Failed to inject frame": same pixel format (the end
@@ -318,6 +342,7 @@ function xfadeChain(segmentLabels, durations, plan) {
   let cumulative = durations[0];
   let prevLabel = segmentLabels[0];
 
+  const resolveTimes = []; // when each transition finishes = the beat it lands on
   for (let i = 1; i < segmentLabels.length; i++) {
     const outLabel = i === segmentLabels.length - 1 ? "vmain" : `x${i}`;
     const { type, dur } = plan[i - 1];
@@ -325,10 +350,11 @@ function xfadeChain(segmentLabels, durations, plan) {
     filters.push(
       `[${prevLabel}][${segmentLabels[i]}]xfade=transition=${type}:duration=${dur.toFixed(3)}:offset=${offset.toFixed(3)}[${outLabel}]`,
     );
+    resolveTimes.push(offset + dur);
     cumulative += durations[i] - dur;
     prevLabel = outLabel;
   }
-  return { filters, totalDuration: cumulative };
+  return { filters, totalDuration: cumulative, resolveTimes };
 }
 
 async function writeTextFile(text) {
@@ -361,6 +387,7 @@ export async function composeVideo({
   titleSubText,
   hook,
   boundaryEnergies = [],
+  drop = null,
   outputPath,
   onProgress,
 }) {
@@ -433,6 +460,7 @@ export async function composeVideo({
   const chain = xfadeChain(segments.map((s) => s.label), durations, plan);
   const joinFilters = chain.filters;
   const totalDuration = chain.totalDuration;
+  const resolveTimes = chain.resolveTimes;
 
   // Canva-style ANIMATED title over the opening shot: bold "FESTIVAL RECAP" +
   // event name/location beneath, each sliding up as it fades in (staggered) and
@@ -464,7 +492,9 @@ export async function composeVideo({
   // edge-to-edge — so it's 0.70 with a 90% width budget: better a slightly
   // smaller title than a clipped one. (drawtext can't size itself: fontsize
   // takes no expression, so text_w is only knowable after the fact.)
-  const CHAR_ADV = 0.7;
+  // Anton is condensed — much narrower advance than DejaVu — so the same hook
+  // renders considerably LARGER before hitting the width budget.
+  const CHAR_ADV = HAVE_ANTON ? 0.54 : 0.7;
   const maxTitleW = width * 0.9;
   const fitSize = Math.floor(maxTitleW / Math.max(1, mainText.length * CHAR_ADV));
   const titleMainSize = Math.max(40, Math.min(style.titleMainSize, fitSize));
@@ -483,8 +513,8 @@ export async function composeVideo({
   // A heavier treatment than plain white + a hairline outline, which vanished
   // into busy festival shots: thick dark outline AND an offset drop shadow, so
   // the text reads over anything.
-  const drawText = ({ path, size, color, y, tIn, borderw }) =>
-    `drawtext=textfile='${path}':fontfile='${FONT_FILE}':fontsize=${size}:fontcolor=${color}:` +
+  const drawText = ({ path, size, color, y, tIn, borderw, font = FONT_FILE }) =>
+    `drawtext=textfile='${path}':fontfile='${font}':fontsize=${size}:fontcolor=${color}:` +
     `borderw=${borderw}:bordercolor=black@0.8:shadowcolor=black@0.55:shadowx=3:shadowy=3:` +
     `x=(w-text_w)/2:y='${slideY(y, tIn)}':alpha='${alphaExpr(tIn)}':${en}`;
 
@@ -497,7 +527,17 @@ export async function composeVideo({
     cur = next;
   };
 
-  chainText(drawText({ path: mainPath, size: titleMainSize, color: "white", y: "h*0.09", tIn: 0, borderw: 6 }));
+  chainText(
+    drawText({
+      path: mainPath,
+      size: titleMainSize,
+      color: "white",
+      y: "h*0.09",
+      tIn: 0,
+      borderw: HAVE_ANTON ? 4 : 6, // Anton is heavy already — a thinner keyline reads cleaner
+      font: HAVE_ANTON ? ANTON_FILE : FONT_FILE,
+    }),
+  );
   let nextY = `h*0.09+${titleMainSize + 26}`;
   if (eventLine) {
     chainText(
@@ -513,12 +553,81 @@ export async function composeVideo({
   // Always land on [vout] whatever got chained (null = free passthrough rename).
   textFilters.push(`[${cur}]null[vout]`);
 
-  // Long fade-out over the last ~2.5s so the music swells down through the end
-  // card (dramatic lead-in to the evestival.com CTA).
+  // ---- Audio: music + layered SFX (Foley) -----------------------------------
+  // Whooshes sweep INTO each flashy transition (starting ~0.25s before it
+  // resolves on its beat), an impact lands ON the drop and a riser builds up to
+  // it. Everything is normalised to one format before amix (mixed sample rates
+  // fail the filter), mixed with normalize=0 so the music keeps its level, and
+  // duration=first so SFX can never lengthen the track. No SFX files → the
+  // plain music chain, unchanged.
+  const AR = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo";
   const fadeOut = Math.min(2.5, totalDuration / 2);
-  const audioFilter =
+  const musicChain =
     `[${musicInputIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
-    `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}[aout]`;
+    `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
+
+  const audioFilters = [];
+  const mixLabels = [];
+  const sfxInputs = []; // file paths, added as ffmpeg inputs after the music
+  const sfxLog = { whooshes: 0, impactAt: null, riserAt: null };
+  let nextInputIdx = musicInputIndex + 1;
+
+  // Whooshes: flashy boundaries only (already energy-gated upstream); evenly
+  // sampled down to MAX_WHOOSHES so a fast style doesn't become a wind tunnel.
+  const whooshFile = sfxPath("whoosh.mp3");
+  if (whooshFile && resolveTimes.length) {
+    let times = resolveTimes
+      .filter((_, i) => !SMOOTH_TRANSITIONS.has(plan[i].type))
+      .map((t) => Math.max(0, t - 0.25))
+      .filter((t) => t < totalDuration - 1);
+    if (times.length > MAX_WHOOSHES) {
+      const step = times.length / MAX_WHOOSHES;
+      times = Array.from({ length: MAX_WHOOSHES }, (_, k) => times[Math.floor(k * step)]);
+    }
+    if (times.length) {
+      const wIdx = nextInputIdx++;
+      sfxInputs.push(whooshFile);
+      audioFilters.push(`[${wIdx}:a]volume=${SFX_VOL.whoosh},${AR}${times.length > 1 ? `,asplit=${times.length}${times.map((_, k) => `[w${k}]`).join("")}` : `[w0]`}`);
+      times.forEach((t, k) => {
+        audioFilters.push(`[w${k}]adelay=${Math.round(t * 1000)}:all=1[ws${k}]`);
+        mixLabels.push(`ws${k}`);
+      });
+      sfxLog.whooshes = times.length;
+    }
+  }
+
+  // Impact ON the drop + riser building INTO it (riser end aligned to the drop
+  // via its probed duration — an off-time riser sounds worse than none).
+  if (Number.isFinite(drop) && drop > 1 && drop < totalDuration - 1.5) {
+    const impactFile = sfxPath("impact.mp3");
+    if (impactFile) {
+      const iIdx = nextInputIdx++;
+      sfxInputs.push(impactFile);
+      audioFilters.push(`[${iIdx}:a]volume=${SFX_VOL.impact},${AR},adelay=${Math.round(drop * 1000)}:all=1[simp]`);
+      mixLabels.push("simp");
+      sfxLog.impactAt = Number(drop.toFixed(2));
+    }
+    const riserFile = sfxPath("riser.mp3");
+    if (riserFile) {
+      const riserDur = await probeDuration(riserFile);
+      const start = riserDur ? drop - riserDur : -1;
+      if (start >= 0.3) {
+        const rIdx = nextInputIdx++;
+        sfxInputs.push(riserFile);
+        audioFilters.push(`[${rIdx}:a]volume=${SFX_VOL.riser},${AR},adelay=${Math.round(start * 1000)}:all=1[sris]`);
+        mixLabels.push("sris");
+        sfxLog.riserAt = Number(start.toFixed(2));
+      }
+    }
+  }
+
+  const audioFilter = mixLabels.length
+    ? [
+        `${musicChain},${AR}[am]`,
+        ...audioFilters,
+        `[am]${mixLabels.map((l) => `[${l}]`).join("")}amix=inputs=${mixLabels.length + 1}:duration=first:normalize=0[aout]`,
+      ].join(";")
+    : `${musicChain}[aout]`;
 
   const filterGraph = [...segments.map((s) => s.filter), ...joinFilters, ...textFilters, audioFilter].join(";");
 
@@ -533,6 +642,7 @@ export async function composeVideo({
     }
   }
   command.input(musicTrack.file_path);
+  for (const f of sfxInputs) command.input(f);
 
   logger.info(
     {
@@ -540,6 +650,8 @@ export async function composeVideo({
       segments: comp.map((it, i) => ({ i, kind: it.kind, dur: Number(it.duration.toFixed(2)) })),
       musicIndex: musicInputIndex,
       totalDuration: Number(totalDuration.toFixed(2)),
+      titleFont: HAVE_ANTON ? "anton" : "dejavu",
+      sfx: sfxLog,
     },
     "ffmpeg inputs",
   );
