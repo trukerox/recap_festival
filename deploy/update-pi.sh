@@ -71,13 +71,32 @@ else
 fi
 
 # ── 2. Decide whether the app needs rebuilding ──────────────────────────────
+# Compare the repo against what is ACTUALLY DEPLOYED (recorded in .deployed_sha
+# after each successful build) — NOT against the pre-pull SHA.
+#
+# Why: the old check was `BEFORE != AFTER`, i.e. "did this pull bring anything
+# new?". If the repo had already been pulled earlier but the rebuild never ran
+# (failed, interrupted, or skipped), every later run saw "already up to date" and
+# skipped forever — leaving the container on stale code while the repo looked
+# current. That silently cost us two debugging sessions, so the deployed SHA is
+# now the source of truth.
+DEPLOYED_FILE="$REPO_DIR/.deployed_sha"
+DEPLOYED="$(cat "$DEPLOYED_FILE" 2>/dev/null || echo "")"
+
 APP_CHANGED=false
-if [[ "$BEFORE" != "$AFTER" ]]; then
-  if git diff --name-only "$BEFORE" "$AFTER" | grep -qvE '^(deploy/|caddy/|README|ARCHITECTURE|\.gitignore|\.gitattributes)'; then
+if [[ -z "$DEPLOYED" ]]; then
+  # No record yet (first run after this change) — rebuild once to establish it.
+  APP_CHANGED=true
+  info "No deployment record yet — rebuilding once to create it."
+elif [[ "$DEPLOYED" != "$AFTER" ]]; then
+  if git diff --name-only "$DEPLOYED" "$AFTER" 2>/dev/null | grep -qvE '^(deploy/|caddy/|README|ARCHITECTURE|\.gitignore|\.gitattributes)'; then
     APP_CHANGED=true
+    info "Deployed ${DEPLOYED:0:7} → repo ${AFTER:0:7} (app files changed)"
+  else
+    info "Deployed ${DEPLOYED:0:7} → repo ${AFTER:0:7} (no app files changed)"
   fi
-  if git diff --name-only "$BEFORE" "$AFTER" | grep -q '^caddy/'; then
-    warn "caddy/festival_recap.caddy changed — re-apply it to your Pi Caddyfile and reload Caddy."
+  if git diff --name-only "$DEPLOYED" "$AFTER" 2>/dev/null | grep -q '^caddy/'; then
+    warn "caddy/ changed — re-apply it to your Pi Caddyfile and reload Caddy."
   fi
 fi
 
@@ -87,9 +106,11 @@ if [[ "$APP_CHANGED" == true || "$FORCE_REBUILD" == true ]]; then
   docker compose up -d --build
   sleep 2
   docker compose ps
-  ok "Container rebuilt and restarted (migrations ran on startup)"
+  # Record what's now running, so the next run compares against reality.
+  echo "$AFTER" > "$DEPLOYED_FILE"
+  ok "Container rebuilt and restarted — now running ${AFTER:0:7} (migrations ran on startup)"
 else
-  ok "No app changes — container restart skipped (use --force-rebuild to override)"
+  ok "Container already running ${AFTER:0:7} — nothing to do (use --force-rebuild to override)"
 fi
 
 echo -e "\n${CYAN}${BOLD}════════════════════════════════════════════════${NC}"

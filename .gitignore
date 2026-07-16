@@ -8,3 +8,6 @@ music/*.mp3
 !music/README.md
 !music/library.json
 Input/
+
+# Per-machine deploy state: which commit is actually built into the container.
+.deployed_sha
