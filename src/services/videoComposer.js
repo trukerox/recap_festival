@@ -225,7 +225,17 @@ function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
 
   // Video clip: cover-crop to fill + colour lift. With no entrance move, keep
   // the cheap plain cover-crop; otherwise route through zoompan for the move.
-  const trim = `trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,`;
+  //
+  // Slow-mo (director-marked, speed 0.5): the input feeds duration*speed seconds
+  // of source (see addInput) and setpts stretches them to the full slice, so the
+  // segment still ends exactly on its beat. NORM's fps=30 duplicates frames to
+  // fill the stretched timestamps — fine on a phone screen; no audio to retime
+  // (the music track is the only audio).
+  const speed = item.speed && item.speed > 0 && item.speed < 1 ? item.speed : 1;
+  const trim =
+    speed !== 1
+      ? `setpts=${(1 / speed).toFixed(4)}*(PTS-STARTPTS),trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,`
+      : `trim=0:${item.duration.toFixed(3)},setpts=PTS-STARTPTS,`;
   if (entrance === "none" || entrance == null) {
     return {
       label,
@@ -315,11 +325,15 @@ async function writeTextFile(text) {
 
 // Adds an input to the ffmpeg command for one media source and returns nothing;
 // stills loop for the segment duration, videos seek to their scored window.
+// Slow-mo videos need only duration*speed seconds of source — setpts stretches
+// them to the full slice in the filter graph (so slow-mo can never run out of
+// source material, unlike speed-UP, which is why we don't offer it).
 function addInput(command, sub, duration) {
   if (sub.kind === "video") {
+    const speed = sub.speed && sub.speed > 0 && sub.speed < 1 ? sub.speed : 1;
     command
       .input(sub.storedPath)
-      .inputOptions([`-ss ${(sub.trimStart ?? 0).toFixed(3)}`, `-t ${duration.toFixed(3)}`]);
+      .inputOptions([`-ss ${(sub.trimStart ?? 0).toFixed(3)}`, `-t ${(duration * speed).toFixed(3)}`]);
   } else {
     command.input(sub.storedPath).inputOptions(["-loop 1", "-r 30", `-t ${duration.toFixed(3)}`]);
   }

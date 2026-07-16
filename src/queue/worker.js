@@ -29,13 +29,23 @@ async function runDirector(scoredRows) {
   try {
     const shots = [];
     for (const r of scoredRows) {
-      let framePath = r.stored_path;
+      const framePaths = [];
       if (r.kind === "video") {
-        framePath = await extractFrame(r.stored_path, Number(r.trim_start_seconds ?? 0) + 0.5).catch(() => null);
-        if (!framePath) continue;
-        cleanup.push(framePath);
+        // Lightweight "proxy": start → action peak → end frames, so the director
+        // judges the clip's actual motion (and can pick slowmo) instead of one
+        // frame. Short clips get just the peak.
+        const dur = Number(r.duration_seconds ?? 0);
+        const peak = Math.min(Math.max(0.3, Number(r.trim_start_seconds ?? 0) + 0.5), Math.max(0.3, dur - 0.3));
+        const times = dur > 4 ? [...new Set([0.3, peak, Math.max(0.3, dur - 0.5)])] : [peak];
+        for (const t of times) {
+          const f = await extractFrame(r.stored_path, t).catch(() => null);
+          if (f) { framePaths.push(f); cleanup.push(f); }
+        }
+        if (!framePaths.length) continue;
+      } else {
+        framePaths.push(r.stored_path);
       }
-      shots.push({ id: r.id, framePath, kind: r.kind });
+      shots.push({ id: r.id, framePaths, kind: r.kind, durationSeconds: Number(r.duration_seconds ?? 0) });
     }
     return await directEdit(shots, { durationSeconds: config.render.durationSeconds });
   } catch (err) {
@@ -115,6 +125,15 @@ async function processJob(job) {
     structure: style.structure ?? null,
     directorOrder: directorPlan?.order ?? null,
   });
+  // Director-marked slow-mo: half-speed playback on the chosen video moments.
+  // Full-screen segments only — a slowed clip inside a split panel just reads
+  // as a stutter next to its normal-speed neighbours.
+  if (directorPlan?.effects) {
+    for (const t of timeline) {
+      if (t.kind === "video" && directorPlan.effects[t.mediaItemId] === "slowmo") t.speed = 0.5;
+    }
+  }
+
   // Split-screen entries carry 2-3 media items — record all in the selection.
   const selected = timeline.flatMap((t) =>
     t.kind === "split3" ? [t.a, t.b, t.c] : t.kind === "split" ? [t.a, t.b] : [t],

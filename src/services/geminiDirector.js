@@ -23,6 +23,9 @@ const DIRECTOR_SCHEMA = {
           index: { type: "integer" },
           role: { type: "string", enum: ["opener", "highlight", "closer"] },
           caption: { type: "string" },
+          // Enum-locked so the model can't request effects the renderer doesn't
+          // have (an open field invites "3D page peel" / "glitch datamosh").
+          effect: { type: "string", enum: ["none", "slowmo"] },
         },
         required: ["index", "role"],
       },
@@ -33,13 +36,14 @@ const DIRECTOR_SCHEMA = {
 
 function directorPrompt(n, seconds) {
   return `You are an award-winning YouTube Shorts director and editor.
-I'm giving you ${n} images labelled "Clip 0" … "Clip ${n - 1}" — frames from a festival's photos and video clips. Plan a ${seconds}-second vertical (9:16) highlights reel.
+I'm giving you ${n} clips labelled "Clip 0" … "Clip ${n - 1}" from a festival — photos (one frame each) and VIDEO clips (marked with their length, shown as up to three frames: start → action peak → end). Plan a ${seconds}-second vertical (9:16) highlights reel.
 
 How THIS engine works, so plan within it:
 - The reel is cut to the music beat. You choose WHICH clips and their ORDER — not durations.
 - Cull hard: drop blurry, dull, badly-lit, repetitive or weak shots. Fewer strong shots beats more weak ones.
 - Order for retention: OPEN on the single most eye-catching shot (role "opener"); build energy through the middle (role "highlight"); END on a satisfying shot (role "closer").
 - For each selected clip give: its index, its role, and an OPTIONAL on-screen caption (max 4 words, punchy — omit when a shot needs none).
+- "effect": VIDEO clips only. "slowmo" plays the moment at half speed for drama — reserve it for at most 2 genuinely strong MOTION moments (a jump, confetti, a crowd surge); everything else "none". Photos are always "none". Only "none" and "slowmo" exist — any other value crashes the renderer.
 - "hook": a 2-5 word bold on-screen opening line for the first ~1.5s.
 - "mood": one or two words (e.g. "high-energy", "warm nostalgic").
 
@@ -54,16 +58,29 @@ export async function directEdit(shots, { durationSeconds }) {
   const parts = [{ text: directorPrompt(shots.length, durationSeconds) }];
   let embedded = 0;
   for (let i = 0; i < shots.length; i++) {
-    let data;
-    try {
-      // Downscale to keep the payload/token cost sane; rotate() honours EXIF.
-      data = (await sharp(shots[i].framePath).rotate().resize(512, 512, { fit: "inside" }).jpeg({ quality: 70 }).toBuffer()).toString("base64");
-    } catch (err) {
-      logger.warn({ err: err.message, index: i }, "director: frame prep failed — skipping clip");
-      continue;
+    const shot = shots[i];
+    const framePaths = Array.isArray(shot.framePaths) ? shot.framePaths : [shot.framePath];
+    const images = [];
+    for (const fp of framePaths) {
+      try {
+        // Downscale to keep the payload/token cost sane; rotate() honours EXIF.
+        images.push(
+          (await sharp(fp).rotate().resize(512, 512, { fit: "inside" }).jpeg({ quality: 70 }).toBuffer()).toString("base64"),
+        );
+      } catch (err) {
+        logger.warn({ err: err.message, index: i }, "director: frame prep failed — skipping frame");
+      }
     }
-    parts.push({ text: `Clip ${i}:` });
-    parts.push({ inline_data: { mime_type: "image/jpeg", data } });
+    if (!images.length) continue;
+    // Metadata label (the "media pool" idea): the director should KNOW which
+    // clips are videos and how long they run — it can't tell from stills alone,
+    // and slowmo only makes sense on real motion.
+    const label =
+      shot.kind === "video"
+        ? `Clip ${i} (VIDEO, ${Math.max(1, Math.round(shot.durationSeconds || 0))}s, frames start→peak→end):`
+        : `Clip ${i} (photo):`;
+    parts.push({ text: label });
+    for (const data of images) parts.push({ inline_data: { mime_type: "image/jpeg", data } });
     embedded++;
   }
   if (embedded < 3) return null;
@@ -74,17 +91,20 @@ export async function directEdit(shots, { durationSeconds }) {
   const seen = new Set();
   const order = [];
   const captions = {};
+  const effects = {};
   for (const s of plan.shots) {
     const shot = shots[s.index];
     if (!shot || seen.has(shot.id)) continue; // invalid or duplicate index
     seen.add(shot.id);
     order.push({ id: shot.id, role: s.role === "opener" || s.role === "closer" ? s.role : "highlight" });
     if (typeof s.caption === "string" && s.caption.trim()) captions[shot.id] = s.caption.slice(0, 40).trim();
+    // Belt-and-braces despite the schema enum: slowmo only, and only on videos.
+    if (s.effect === "slowmo" && shot.kind === "video") effects[shot.id] = "slowmo";
   }
   if (order.length < 3) return null;
 
   logger.info(
-    { selected: order.length, of: shots.length, mood: plan.mood, hook: plan.hook },
+    { selected: order.length, of: shots.length, mood: plan.mood, hook: plan.hook, slowmo: Object.keys(effects).length },
     "gemini director plan",
   );
   return {
@@ -92,5 +112,6 @@ export async function directEdit(shots, { durationSeconds }) {
     mood: typeof plan.mood === "string" ? plan.mood.slice(0, 40) : null,
     order,
     captions,
+    effects,
   };
 }
