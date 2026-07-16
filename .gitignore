@@ -11,3 +11,6 @@ Input/
 
 # Per-machine deploy state: which commit is actually built into the container.
 .deployed_sha
+
+# Colour LUTs are third-party licensed assets — mounted, never committed (see luts/README.md).
+luts/*.cube

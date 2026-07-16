@@ -176,6 +176,7 @@ async function processJob(job) {
     eventName: project.event_name,
     titleSubText: buildTitleSub(project),
     hook: directorPlan?.hook ?? null,
+    mood: directorPlan?.mood ?? null,
     boundaryEnergies,
     drop,
     outputPath,

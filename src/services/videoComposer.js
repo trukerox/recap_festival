@@ -35,6 +35,27 @@ const sfxPath = (name) => {
 const SFX_VOL = { whoosh: 0.4, impact: 0.9, riser: 0.55 };
 const MAX_WHOOSHES = 8;
 
+// Mood → LUT. The director already returns a free-text mood ("Vibrant, Joyful"),
+// so match on keywords rather than demanding an exact string, and fall back
+// through vibrant → default → no LUT. Drop <bucket>.cube files in the mounted
+// luts/ dir to activate; a missing file simply means no grade for that mood.
+const MOOD_LUT_RULES = [
+  { bucket: "warm", re: /warm|nostalg|golden|sunset|cosy|cozy|vintage|romantic/i },
+  { bucket: "vibrant", re: /vibrant|joy|happy|energe|festive|lively|fun|bright|party/i },
+  { bucket: "cool", re: /cool|sleek|modern|clean|crisp|blue|calm|serene/i },
+  { bucket: "moody", re: /moody|dramatic|dark|intense|cinematic|epic|night/i },
+];
+
+function resolveLut(mood) {
+  const bucket = MOOD_LUT_RULES.find((r) => r.re.test(String(mood || "")))?.bucket;
+  for (const name of [bucket, "vibrant", "default"]) {
+    if (!name) continue;
+    const p = join(config.paths.lutDir, `${name}.cube`);
+    if (existsSync(p)) return { file: p, bucket: name };
+  }
+  return { file: null, bucket: null };
+}
+
 function probeDuration(path) {
   return new Promise((resolve) => {
     ffmpeg.ffprobe(path, (err, data) => resolve(err ? null : Number(data?.format?.duration) || null));
@@ -174,17 +195,22 @@ function blurredFit({ inputIndex, index, frames, width, height, eq, scaleUp, bas
 // layer. Colour-only here (order-independent, safe to run before zoompan); the
 // spatial vignette is applied once to the finished frame instead. Kept moderate
 // so it reads filmic, not like a heavy Instagram filter.
-function gradeChain(grade) {
-  // Teal-orange split-tone PARKED per user ("can wait") so transitions can be
-  // judged cleanly. Re-enable by appending:
-  //   + ",colorbalance=rs=-0.04:bs=0.12:rh=0.10:bh=-0.10"
-  return `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
+// lutFile (mood-matched .cube, optional) does the heavy colour lifting when
+// present — a real film LUT encodes non-linear colour science we can't
+// meaningfully hand-code, which is exactly why the parked hand-rolled
+// teal-orange split-tone (colorbalance=rs=-0.04:bs=0.12:rh=0.10:bh=-0.10) is
+// NOT reinstated here: stacking both would double-grade. eq stays as the base
+// lift either way. Applied per clip, never to the branded end card, so the LUT
+// can't shift the brand orange.
+function gradeChain(grade, lutFile) {
+  const eq = `eq=saturation=${grade.saturation}:contrast=${grade.contrast}:brightness=${grade.brightness}`;
+  return lutFile ? `${eq},lut3d=file='${lutFile}'` : eq;
 }
 
-function segmentFilter({ item, index, width, height, grade, panPx, entrance }) {
+function segmentFilter({ item, index, width, height, grade, panPx, entrance, lutFile }) {
   const label = `v${index}`;
   const frames = Math.max(1, Math.round(item.duration * 30));
-  const eq = gradeChain(grade);
+  const eq = gradeChain(grade, lutFile);
 
   // Split-screen moment: two clips stacked vertically (Canva-style geometry).
   if (item.kind === "split") {
@@ -386,6 +412,7 @@ export async function composeVideo({
   eventName,
   titleSubText,
   hook,
+  mood = null,
   boundaryEnergies = [],
   drop = null,
   outputPath,
@@ -446,6 +473,9 @@ export async function composeVideo({
   // clips that already get a flashy transition (zoomin/hblur/slide/…). Smooth
   // transitions (fades/dissolves) and the card don't punch, so calm styles stay
   // calm and we don't reintroduce the old "constant motion" feel.
+  // The director's mood ("Vibrant, Joyful") picks the LUT; null when no matching
+  // .cube is mounted, in which case the grade is exactly as before.
+  const lut = resolveLut(mood);
   const segments = comp.map((item, index) => {
     const inc = plan[index - 1];
     const accent = index > 0 && inc && !SMOOTH_TRANSITIONS.has(inc.type)
@@ -453,6 +483,7 @@ export async function composeVideo({
     return segmentFilter({
       item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50,
       entrance: accent ? "punch" : "none",
+      lutFile: lut.file,
     });
   });
   const durations = comp.map((item) => item.duration);
@@ -652,6 +683,8 @@ export async function composeVideo({
       totalDuration: Number(totalDuration.toFixed(2)),
       titleFont: HAVE_ANTON ? "anton" : "dejavu",
       sfx: sfxLog,
+      mood: mood || null,
+      lut: lut.bucket,
     },
     "ffmpeg inputs",
   );

@@ -80,6 +80,11 @@ services:
       # auto-import downloads mp3s straight into it. Bootstrapped from the
       # repo's music/library.json template by deploy/setup-pi.sh.
       - /mnt/storage/festival_recap/music:/app/music
+      # Colour LUTs (.cube), bind-mounted for the same reasons as music: free LUT
+      # packs generally forbid redistribution (so they stay out of git), and
+      # swapping the look is a file copy rather than an image rebuild.
+      # Read-only — the app never writes here. See luts/README.md for naming.
+      - /mnt/storage/festival_recap/luts:/app/luts:ro
     networks:
       - web
     healthcheck:

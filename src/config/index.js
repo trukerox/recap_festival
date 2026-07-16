@@ -32,6 +32,11 @@ export const config = {
     renderDir: process.env.RENDER_DIR || "./data/renders",
     tmpDir: process.env.TMP_DIR || "./data/tmp",
     musicDir: process.env.MUSIC_DIR || "./music",
+    // 3D colour LUTs (.cube), bind-mounted like the music library rather than
+    // baked into the image: free LUT packs usually forbid redistribution (so
+    // they must stay out of git), and mounting means trying a new look is a
+    // file copy, not a rebuild.
+    lutDir: process.env.LUT_DIR || "./luts",
     // Reference clips (e.g. Canva examples) uploaded to study editing style —
     // not part of any render, just stored + played back in the Videos tab.
     referenceDir: process.env.REFERENCE_DIR || "./data/reference",
