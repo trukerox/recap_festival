@@ -103,12 +103,27 @@ fi
 # ── 3. Rebuild + restart ─────────────────────────────────────────────────────
 if [[ "$APP_CHANGED" == true || "$FORCE_REBUILD" == true ]]; then
   step "Rebuilding + restarting the festival_recap container"
-  docker compose up -d --build
-  sleep 2
+  # --force-recreate is REQUIRED: `up -d --build` alone happily builds a new
+  # image and then leaves the OLD container running ("Container ... Running"),
+  # so the new code never reaches the service. That is exactly how we spent
+  # rounds debugging a Gemini bug that had already been fixed but never built.
+  docker compose up -d --build --force-recreate
+  sleep 3
   docker compose ps
-  # Record what's now running, so the next run compares against reality.
+
+  # Never claim a deploy we can't prove: the running container must be on the
+  # image we just built.
+  BUILT_IMG="$(docker image inspect -f '{{.Id}}' festival_recap:latest 2>/dev/null || echo "")"
+  RUN_IMG="$(docker inspect -f '{{.Image}}' festival_recap 2>/dev/null || echo "")"
+  if [[ -n "$BUILT_IMG" && -n "$RUN_IMG" && "$BUILT_IMG" != "$RUN_IMG" ]]; then
+    echo -e "${RED}✖  Container is NOT running the image just built — deploy FAILED.${NC}"
+    echo "      built:   $BUILT_IMG"
+    echo "      running: $RUN_IMG"
+    echo "      Try: docker compose up -d --build --force-recreate"
+    exit 1
+  fi
   echo "$AFTER" > "$DEPLOYED_FILE"
-  ok "Container rebuilt and restarted — now running ${AFTER:0:7} (migrations ran on startup)"
+  ok "Container rebuilt + recreated — VERIFIED running ${AFTER:0:7} (migrations ran on startup)"
 else
   ok "Container already running ${AFTER:0:7} — nothing to do (use --force-rebuild to override)"
 fi
