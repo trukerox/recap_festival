@@ -201,6 +201,7 @@ const $ = (id) => document.getElementById(id);
 let projectId = null;
 let jobId = null;
 let renderStartMs = 0;
+let pollTimer = null;
 
 // Persist the current project across browser refreshes (a deploy + hard-refresh
 // used to wipe it, forcing a full re-upload). We only store the id; the server
@@ -444,8 +445,17 @@ async function pollJob() {
   } catch {
     // transient network error — keep polling rather than freezing
   }
-  setTimeout(pollJob, 3000);
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollJob, 3000);
 }
+
+// Mobile browsers SUSPEND timers in background tabs — switch away during a
+// render and the polling loop dies, leaving "Rendering…" on screen forever
+// while the job actually finished (the Telegram ping told the truth, the tab
+// didn't). Re-poll immediately whenever the tab comes back.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && jobId) { clearTimeout(pollTimer); pollJob(); }
+});
 
 // ---- Music tab: upload path ----
 $('upAutoDetect').addEventListener('change', () => {

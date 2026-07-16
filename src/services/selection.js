@@ -189,6 +189,22 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   const effSlice = normalAdvance * medianGap;
   const heroAdvance = Math.max(normalAdvance, beatsFor(Math.min(MAX_HERO_SECONDS, effSlice * Math.max(1, heroHold))));
 
+  // PACING CURVE ("the breath"): uniform cutting frequency reads amateur. When
+  // a drop exists: up to 3 cuts ACCELERATE into it (double-time, building with
+  // the music), the boundary before the payoff is SHORTENED so it lands exactly
+  // ON the drop beat, and the payoff shot then HOLDS long so the viewer can
+  // breathe before normal pacing resumes. Acceleration is skipped when the pool
+  // is already being stretched to fill (effSlice > MAX_SLICE) or shallow (≤4) —
+  // it would drain the queue and dump the slack onto the end card.
+  const accelAdvance = Math.max(1, Math.ceil(normalAdvance / 2));
+  const breathAdvance = Math.max(heroAdvance, beatsFor(Math.min(MAX_HERO_SECONDS, effSlice * 1.8)));
+  let accelLeft = 3;
+  let dropBeatIdx = -1;
+  if (dropAt != null) {
+    dropBeatIdx = 0;
+    for (let i = 1; i < B.length; i++) if (Math.abs(B[i] - dropAt) < Math.abs(B[dropBeatIdx] - dropAt)) dropBeatIdx = i;
+  }
+
   let splitsLeft = splitCount;
   const splitSlots = new Set(splitCount > 0 ? [2, 6, 10] : []);
   let slot = 0;
@@ -201,7 +217,9 @@ function buildBeatTimeline(scoredMediaRows, opts) {
       queue.unshift(reserved);
       reserved = null;
     }
-    if (!dropNow && splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
+    const toDrop = reserved && dropBeatIdx > idx ? dropBeatIdx - idx : Infinity;
+    const nearDrop = toDrop <= 3 * normalAdvance; // inside the build-up window
+    if (!dropNow && !nearDrop && splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
       const next = idx + normalAdvance;
       if (next >= B.length || B[next] > usableEnd) break;
       seq.push(toSplitItem(queue.shift(), queue.shift(), B[next] - B[idx]));
@@ -209,9 +227,25 @@ function buildBeatTimeline(scoredMediaRows, opts) {
       splitsLeft--;
     } else {
       const row = queue[0];
-      const advance = row.shot_type === "close" ? heroAdvance : normalAdvance;
-      const next = idx + advance;
-      if (next >= B.length || B[next] > usableEnd) break;
+      let advance = row.shot_type === "close" ? heroAdvance : normalAdvance;
+      if (dropNow) {
+        advance = breathAdvance; // the payoff holds — breathe
+      } else if (nearDrop) {
+        if (accelLeft > 0 && queue.length > 4 && effSlice <= MAX_SLICE_SECONDS) {
+          advance = Math.min(accelAdvance, toDrop); // double-time, never past the drop
+          accelLeft--;
+        } else {
+          advance = Math.min(advance, toDrop); // shorten to land exactly ON the drop
+        }
+      }
+      let next = idx + advance;
+      if (next >= B.length || B[next] > usableEnd) {
+        // Pool ran out just short of the window: stretch the LAST shot to the
+        // end-card boundary (within MAX_FILL) instead of leaving a long card.
+        const last = B.length - 1;
+        if (queue.length === 1 && last > idx && B[last] - B[idx] <= MAX_FILL_SECONDS) next = last;
+        else break;
+      }
       seq.push(toTimelineItem(queue.shift(), "highlight", B[next] - B[idx]));
       idx = next;
     }
