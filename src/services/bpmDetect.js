@@ -146,10 +146,13 @@ export async function detectBpm(filePath) {
 
 // Detects the ACTUAL beat timestamps (seconds) in a track via aubio — the
 // caller cuts ON these so the edit lands on the real kicks, not a fixed grid
-// from t=0 (which ignores the song's intro and any drift). Returns
-// { beats: number[], bpm } or { beats: [] } if aubio is unavailable/failed.
-// Analyses the whole track (unlike detectBpm's 30s window) so beats cover the
-// full render length.
+// from t=0 (which ignores the song's intro and any drift). Also returns the
+// per-beat loudness ("energies", 0..1, same length as beats) and the DROP —
+// the beat where sustained energy jumps the most — so the edit can put its
+// strongest shot on the musical payoff and keep the flashy transitions to the
+// high-energy stretches. Returns { beats: [], energies: [], drop: null } if
+// aubio is unavailable/failed. Analyses the whole track (unlike detectBpm's
+// 30s window) so beats cover the full render length.
 export async function detectBeats(filePath) {
   const wav = join(config.paths.tmpDir, `${randomUUID()}.wav`);
   try {
@@ -162,9 +165,18 @@ export async function detectBeats(filePath) {
     });
     const parsed = JSON.parse(stdout);
     const beats = Array.isArray(parsed?.beats) ? parsed.beats.filter((b) => Number.isFinite(b)) : [];
-    return { beats, bpm: parsed?.bpm ? foldTempo(parsed.bpm) : null };
+    const energies =
+      Array.isArray(parsed?.energies) && parsed.energies.length === beats.length
+        ? parsed.energies.map((e) => (Number.isFinite(e) ? Math.max(0, Math.min(1, e)) : 0))
+        : [];
+    return {
+      beats,
+      energies,
+      drop: Number.isFinite(parsed?.drop) ? parsed.drop : null,
+      bpm: parsed?.bpm ? foldTempo(parsed.bpm) : null,
+    };
   } catch {
-    return { beats: [], bpm: null };
+    return { beats: [], energies: [], drop: null, bpm: null };
   } finally {
     await unlink(wav).catch(() => {});
   }

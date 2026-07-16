@@ -276,9 +276,17 @@ const DEFAULT_TRANSITION = { effects: ["fade", "dissolve"], effectDur: 0.3, cutD
 // (only the non-soft, flashy ones do).
 const SMOOTH_TRANSITIONS = new Set(["fade", "fadeblack", "fadewhite", "fadeslow", "fadefast", "dissolve"]);
 
+// Below this music energy (0..1) a boundary cuts quietly (quick fade) even if
+// the cadence would have given it a flashy effect. Whip-slides through a calm
+// verse read as random; saved for the hot stretches they read as musical.
+const ENERGY_FLASHY_MIN = 0.45;
+
 // Build the per-boundary plan ([{ type, dur }] of length n). The boundary INTO
 // the end card always gets a clean dip-to-black so the branded card lands well.
-function buildTransitionPlan(n, style, cardIndex) {
+// boundaryEnergies (optional, from the beat analysis) gates the flashy effects
+// to the high-energy stretches of the track; null entries mean "unknown" and
+// keep the plain cadence behaviour.
+function buildTransitionPlan(n, style, cardIndex, boundaryEnergies = []) {
   const t = TRANSITION_SETS[style.name] || DEFAULT_TRANSITION;
   const effects = t.effects.length ? t.effects : ["fade"];
   const start = Math.floor(Math.random() * effects.length);
@@ -286,7 +294,9 @@ function buildTransitionPlan(n, style, cardIndex) {
   let e = 0;
   for (let i = 0; i < n; i++) {
     if (i + 1 === cardIndex) { plan.push({ type: "fadeblack", dur: Math.max(0.3, t.effectDur) }); continue; }
-    if (t.every >= 1 && i % t.every === 0) {
+    const energy = boundaryEnergies[i];
+    const hot = energy == null || energy >= ENERGY_FLASHY_MIN;
+    if (t.every >= 1 && i % t.every === 0 && hot) {
       plan.push({ type: effects[(start + e) % effects.length], dur: t.effectDur });
       e++;
     } else {
@@ -346,6 +356,7 @@ export async function composeVideo({
   eventName,
   titleSubText,
   hook,
+  boundaryEnergies = [],
   outputPath,
   onProgress,
 }) {
@@ -373,7 +384,7 @@ export async function composeVideo({
   // first) by its INCOMING transition length. xfade steals `dur` from each
   // boundary, so this padding both preserves the 30s total AND makes every
   // transition resolve exactly on its beat (cuts stay beat-locked).
-  const plan = buildTransitionPlan(comp.length - 1, style, comp.length - 1);
+  const plan = buildTransitionPlan(comp.length - 1, style, comp.length - 1, boundaryEnergies);
   comp = comp.map((it, i) => {
     if (i === 0) return it;
     const d = plan[i - 1].dur;

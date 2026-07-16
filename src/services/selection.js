@@ -149,6 +149,26 @@ function buildBeatTimeline(scoredMediaRows, opts) {
     split3Left--;
   }
 
+  // THE DROP: the beat where the music's sustained energy jumps (detected by
+  // the aubio sidecar). RESERVE the strongest shot for it UP FRONT — the
+  // director's slow-mo video if one is queued, else the highest-scored shot.
+  // Reserving matters: picking "best remaining" at the drop doesn't work,
+  // because the best shot is usually consumed by the queue before the drop
+  // arrives (mock-test proved it).
+  const preferAtDrop = Array.isArray(opts.preferAtDrop) ? opts.preferAtDrop : [];
+  const dropAt = Number.isFinite(opts.drop) && opts.drop > B[idx] && opts.drop <= usableEnd ? opts.drop : null;
+  let reserved = null;
+  if (dropAt != null && queue.length > 1) {
+    let bi = queue.findIndex((r) => preferAtDrop.includes(r.id));
+    if (bi < 0) {
+      bi = 0;
+      for (let i = 1; i < queue.length; i++) {
+        if ((queue[i].composite_score ?? 0) > (queue[bi].composite_score ?? 0)) bi = i;
+      }
+    }
+    reserved = queue.splice(bi, 1)[0];
+  }
+
   // NO REPEATS. Pace the remaining cuts so the shots we still have fill the
   // window exactly — one shot, one slot, nothing shown twice. We used to RECYCLE
   // the pool when it ran dry (to avoid the closing shot freezing), and that's
@@ -156,7 +176,7 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   // STRETCHES when shots are scarce; when the style's pace is slower than needed
   // we simply use fewer shots. Either way no shot is ever repeated.
   const splitCount = Math.max(0, splitMoments);
-  const remainingSegments = Math.max(1, queue.length - splitCount); // a 2-up split eats 1 extra shot
+  const remainingSegments = Math.max(1, queue.length + (reserved ? 1 : 0) - splitCount); // a 2-up split eats 1 extra shot
   const remainingWindow = Math.max(0.1, usableEnd - B[idx]);
   // Work in BEATS (cuts must land on them). Round the fill pace UP so the shots
   // we have cover the window — rounding down would run out early and leave the
@@ -172,8 +192,16 @@ function buildBeatTimeline(scoredMediaRows, opts) {
   let splitsLeft = splitCount;
   const splitSlots = new Set(splitCount > 0 ? [2, 6, 10] : []);
   let slot = 0;
-  while (idx < B.length && queue.length > 0) {
-    if (splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
+  while (idx < B.length && (queue.length > 0 || reserved)) {
+    // Release the reserved shot on the first segment starting at/after the drop
+    // (within half a beat, so a hero hold overshooting slightly still counts) —
+    // or immediately if the queue ran dry early, so it's never lost.
+    const dropNow = Boolean(reserved) && (B[idx] >= dropAt - medianGap / 2 || queue.length === 0);
+    if (dropNow) {
+      queue.unshift(reserved);
+      reserved = null;
+    }
+    if (!dropNow && splitsLeft > 0 && splitSlots.has(slot) && queue.length >= 2) {
       const next = idx + normalAdvance;
       if (next >= B.length || B[next] > usableEnd) break;
       seq.push(toSplitItem(queue.shift(), queue.shift(), B[next] - B[idx]));
@@ -254,9 +282,11 @@ export function buildTimeline(
     splitMoments = 0,
     structure = null,
     directorOrder = null,
+    drop = null,
+    preferAtDrop = [],
   },
 ) {
-  const opts = { beats, bpm, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure, directorOrder };
+  const opts = { beats, bpm, totalDurationSeconds, targetSlice, closeupBias, heroHold, splitMoments, structure, directorOrder, drop, preferAtDrop };
   if (Array.isArray(beats) && beats.length >= 8) {
     const beatTimeline = buildBeatTimeline(scoredMediaRows, opts);
     if (beatTimeline && beatTimeline.length >= 3) return beatTimeline;

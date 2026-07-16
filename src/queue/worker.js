@@ -103,14 +103,15 @@ async function processJob(job) {
   const style = getStyle(job.style);
 
   // Detect the ACTUAL beat timestamps in the chosen track so cuts land on the
-  // real kicks (not a fixed grid). Falls back to the BPM grid if aubio can't.
-  const { beats } = await detectBeats(musicTrack.file_path);
+  // real kicks (not a fixed grid), plus per-beat energy and the DROP — the
+  // musical payoff beat. Falls back to the BPM grid if aubio can't.
+  const { beats, energies, drop } = await detectBeats(musicTrack.file_path);
 
   // Let Gemini direct WHICH shots and in WHAT ORDER (opener → build → closer);
   // beats still decide the cut timing. Null → heuristic order (no regression).
   const directorPlan = await runDirector(scoredRows);
   logger.info(
-    { jobId: job.id, style: style.name, beatsDetected: beats.length, director: Boolean(directorPlan) },
+    { jobId: job.id, style: style.name, beatsDetected: beats.length, drop, director: Boolean(directorPlan) },
     "render style",
   );
 
@@ -124,6 +125,9 @@ async function processJob(job) {
     splitMoments: style.splitMoments,
     structure: style.structure ?? null,
     directorOrder: directorPlan?.order ?? null,
+    drop,
+    // The drop shot should be the director's slow-mo pick when there is one.
+    preferAtDrop: Object.keys(directorPlan?.effects ?? {}).map(Number),
   });
   // Director-marked slow-mo: half-speed playback on the chosen video moments.
   // Full-screen segments only — a slowed clip inside a split panel just reads
@@ -143,6 +147,26 @@ async function processJob(job) {
     selected.map((t, i) => ({ mediaItemId: t.mediaItemId, order: i })),
   );
 
+  // Music energy at each segment boundary (where transitions resolve), so the
+  // composer can keep the flashy transitions to the hot stretches and cut
+  // quietly through the calm ones. Boundary k = end of segment k, which is a
+  // beat by construction — look up the nearest beat's energy.
+  const energyAt = (t) => {
+    if (!energies.length) return null;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < beats.length; i++) {
+      const d = Math.abs(beats[i] - t);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    return energies[bi];
+  };
+  const boundaryEnergies = [];
+  let cum = 0;
+  for (let k = 0; k < timeline.length - 1; k++) {
+    cum += timeline[k].duration;
+    boundaryEnergies.push(energyAt(cum));
+  }
+
   await updateStatus(job.id, "rendering");
   const outputPath = join(config.paths.renderDir, `${project.id}-${randomUUID()}.mp4`);
   await composeVideo({
@@ -152,6 +176,7 @@ async function processJob(job) {
     eventName: project.event_name,
     titleSubText: buildTitleSub(project),
     hook: directorPlan?.hook ?? null,
+    boundaryEnergies,
     outputPath,
     onProgress: (p) => {
       // Estimate from output time processed (timemark "HH:MM:SS.xx"), which
