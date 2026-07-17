@@ -108,6 +108,30 @@ const BLUR_RADIUS = 20;
 // the title's event line and the closing CTA read as one brand.
 const BRAND_ORANGE = "0xE07A1E";
 
+// Widest aspect (w/h) a photo may keep before blurredFit crops it. 0.8 = 4:5.
+//
+// Fitting a WHOLE 16:9 shot into 9:16 leaves a 1080x607 band — 32% picture, 68%
+// blurred wallpaper. That was blurredFit doing exactly what it was designed to do,
+// and the design was wrong: it replaced a 68% CROP with a 68% BLUR. Same 68%, just
+// soft. On a phone, two-thirds of the screen was out of focus.
+//
+// There is no setting that wins both — 16:9 into 9:16 is a 3.16x aspect change, so
+// this is a dial. For a 16:9 source:
+//     no cap  100% of width kept, 32% of frame filled, 68% blur
+//     1:1      56% kept, 56% filled, 44% blur
+//     4:5      45% kept, 70% filled, 30% blur   <- here
+// 4:5 is the social-video convention, and 30% blur reads as a deliberate frame
+// rather than wallpaper.
+//
+// Expressed as a filter EXPRESSION, not computed from item.srcWidth/srcHeight, on
+// purpose: ffmpeg evaluates iw/ih after auto-rotation, whereas our stored dims are
+// pre-rotation for EXIF-rotated images (sharp reported 4000x1844 for a shot ffmpeg
+// rotated to portrait — that mismatch crashed the crop once already). min() also
+// makes this a no-op for anything already TALLER than 4:5, so portrait shots still
+// fill the frame edge to edge and never get cropped. crop centres by default.
+const PHOTO_MAX_ASPECT = 0.8;
+const FG_ASPECT_CAP = `crop=w='min(iw,ih*${PHOTO_MAX_ASPECT})':h=ih`;
+
 // Entrance-move palette — the fix for "same transition all over". Each clip
 // enters with a DIFFERENT eased move that resolves within a handful of frames
 // (so the cut still lands ON the beat), giving per-cut variety without any
@@ -196,7 +220,7 @@ function blurredFit({ inputIndex, index, frames, width, height, eq, scaleUp, bas
     `[${bg}]scale=${canW}:${canH}:force_original_aspect_ratio=increase,crop=${canW}:${canH},` +
     `boxblur=luma_radius=${BLUR_RADIUS}:luma_power=2:chroma_radius=${BLUR_RADIUS}:chroma_power=1,` +
     `eq=brightness=-0.06[${bgb}];` + // darken the backdrop so the shot pops
-    `[${fg}]scale=${width}:${height}:force_original_aspect_ratio=decrease[${fgs}];` +
+    `[${fg}]${FG_ASPECT_CAP},scale=${width}:${height}:force_original_aspect_ratio=decrease[${fgs}];` +
     `[${bgb}][${fgs}]overlay=(W-w)/2:(H-h)/2,${eq},` +
     `zoompan=z='${z}':x='${x}':y='${y}':d=1:s=${width}x${height}:fps=30,` +
     `${NORM}[${label}]`
