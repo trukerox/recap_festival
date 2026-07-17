@@ -14,6 +14,7 @@ import config from "../config/index.js";
 import logger from "../utils/logger.js";
 import { generateEndCard } from "./endCard.js";
 import { getStyle } from "./styles.js";
+import { fitFontSize } from "./fontMetrics.js";
 
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 // Type pairing. The hook is Anton (bundled, SIL OFL): a heavy condensed poster
@@ -594,18 +595,20 @@ export async function composeVideo({
     eventLine = "";
   }
 
-  // Auto-shrink so a long hook fits instead of running off both edges. CHAR_ADV
-  // is the rough advance width per char for this font (uppercase), as a fraction
-  // of fontsize. 0.62 was measured too low — "FESTIVAL FUN UNLEASHED!" rendered
-  // edge-to-edge — so it's 0.70 with a 90% width budget: better a slightly
-  // smaller title than a clipped one. (drawtext can't size itself: fontsize
-  // takes no expression, so text_w is only knowable after the fact.)
-  // Anton is condensed — much narrower advance than DejaVu — so the same hook
-  // renders considerably LARGER before hitting the width budget.
-  const CHAR_ADV = HAVE_ANTON ? 0.54 : 0.7;
+  // Auto-shrink so a long hook fits instead of running off both edges. drawtext
+  // can't size itself (fontsize takes no expression; text_w is only knowable after
+  // layout), so we measure the string against the actual font — see fontMetrics.
+  //
+  // This used to estimate with a CHAR_ADV constant, guessed three times and wrong
+  // every time. Measuring the fonts showed no fourth guess would have worked:
+  // Anton's W is 3.1x its I, so real hooks average 0.417/char while an 18-char
+  // all-W hook needs 0.71 not to clip. Every constant is simultaneously too big for
+  // one hook and too small for another. Measuring the ACTUAL string has no such
+  // tension — and it agrees with drawtext by construction, since both read the
+  // same advance widths out of the same TTF.
+  const titleFontFile = HAVE_ANTON ? ANTON_FILE : FONT_FILE;
   const maxTitleW = width * 0.9;
-  const fitSize = Math.floor(maxTitleW / Math.max(1, mainText.length * CHAR_ADV));
-  const titleMainSize = Math.max(40, Math.min(style.titleMainSize, fitSize));
+  const titleMainSize = Math.max(40, fitFontSize(titleFontFile, mainText, maxTitleW, style.titleMainSize));
   const eventSize = style.titleSubSize + 4;
   const locSize = Math.max(26, style.titleSubSize - 8);
 
