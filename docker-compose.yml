@@ -118,8 +118,18 @@ services:
     # OFF; check with `docker info | grep -i "No memory limit"`. Enable by adding
     #   cgroup_enable=memory cgroup_memory=1
     # to the single line in /boot/firmware/cmdline.txt, then reboot.
-    mem_limit: 3g
-    memswap_limit: 3g
+    # 3g -> 4g. Measured, not guessed: `cinematic` (cross-fades only) peaks at
+    # 1.3GB and finishes, while `clean` (zoomin/smoothright geometric transitions
+    # + a split-screen segment) blows past 3GB and gets cgroup-OOM-killed. The
+    # style drives peak memory, by at least 2.3x.
+    #
+    # 4g is what the box can honestly spare: 7.9GB total, ~2.6GB held by the other
+    # containers, leaving ~1.3GB for the kernel and page cache. It is NOT known to
+    # be enough — a killed render only tells you where the wall was, never how far
+    # the process wanted to go. If `clean` still dies here, the answer is to make
+    # the filter graph cheaper, not to keep buying headroom the Pi doesn't have.
+    mem_limit: 4g
+    memswap_limit: 4g
     cpus: "3.0"
     logging:
       driver: json-file
