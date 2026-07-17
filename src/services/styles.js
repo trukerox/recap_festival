@@ -3,9 +3,15 @@
 // and the algorithm. A preset feeds:
 //   - selection.js  → pace (targetSlice), close-up weighting (closeupBias),
 //                     hero holds (heroHold), split-screen moments (splitMoments)
-//   - videoComposer → transitions, transition length, colour grade, title sizes,
-//                     photo drift (panPx)
+//   - videoComposer → colour grade, title sizes, photo drift (panPx)
 //   - music pick    → preferred genre/vibe (when the project's style is "auto")
+//
+// TRANSITIONS ARE NOT DEFINED HERE. They live in videoComposer's TRANSITION_SETS,
+// keyed by style NAME. This file used to also carry `hardCuts`/`transitions`/
+// `transitionDuration` fields that nothing read — they described the old concat
+// design and survived the move to xfade, so they sat here for months contradicting
+// what actually shipped. Removed: a field that lies is worse than no field.
+// Change a style's cut feel in TRANSITION_SETS, not here.
 //
 // Canva-derived ground rules (from studying reference edits frame by frame):
 //   * shots stay essentially STILL — the cuts carry the energy (small panPx)
@@ -25,9 +31,6 @@ export const STYLES = [
     // beat multiple, so cuts land on the kick.
     name: "beatcut",
     label: "Canva / Beat-Cut",
-    hardCuts: true, // concat, not xfade — instant cuts
-    transitions: [], // unused with hardCuts
-    transitionDuration: 0,
     targetSlice: 1.2, // 1.0-1.5s micro-clips, beat-snapped
     grade: { saturation: 1.35, contrast: 1.06, brightness: 0.03 }, // vibrant realism
     closeupBias: 1.4,
@@ -42,9 +45,6 @@ export const STYLES = [
   {
     name: "punchy",
     label: "Punchy / Trend",
-    hardCuts: true, // instant cuts on the beat
-    transitions: [],
-    transitionDuration: 0,
     targetSlice: 1.2, // fast cuts
     grade: { saturation: 1.3, contrast: 1.08, brightness: 0.02 },
     closeupBias: 1.35,
@@ -58,8 +58,6 @@ export const STYLES = [
   {
     name: "cinematic",
     label: "Smooth Cinematic",
-    transitions: ["fade", "fadeblack", "fade"],
-    transitionDuration: 0.4, // longest allowed — anything more smears
     targetSlice: 2.0, // calm
     grade: { saturation: 1.14, contrast: 1.03, brightness: 0.0 },
     closeupBias: 1.1,
@@ -73,9 +71,6 @@ export const STYLES = [
   {
     name: "dynamic",
     label: "Dynamic / Motion",
-    hardCuts: true, // instant cuts on the beat
-    transitions: [],
-    transitionDuration: 0,
     targetSlice: 1.5,
     grade: { saturation: 1.25, contrast: 1.05, brightness: 0.02 },
     closeupBias: 1.2,
@@ -89,9 +84,6 @@ export const STYLES = [
   {
     name: "clean",
     label: "Clean / Minimal",
-    hardCuts: true, // instant cuts on the beat
-    transitions: [],
-    transitionDuration: 0,
     targetSlice: 1.7,
     grade: { saturation: 1.18, contrast: 1.04, brightness: 0.0 },
     closeupBias: 1.0,

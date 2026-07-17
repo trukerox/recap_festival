@@ -322,7 +322,14 @@ const TRANSITION_SETS = {
   punchy:    { effects: ["zoomin", "hblur", "slideleft", "slideright", "pixelize"],              effectDur: 0.20, cutDur: 0.05, every: 2 },
   dynamic:   { effects: ["zoomin", "radial", "circleopen", "squeezeh", "hlslice", "slidedown"],  effectDur: 0.26, cutDur: 0.05, every: 2 },
   clean:     { effects: ["dissolve", "zoomin", "smoothright", "fadeslow"],                       effectDur: 0.30, cutDur: 0.06, every: 3 },
-  cinematic: { effects: ["fade", "fadeblack", "dissolve", "fadeslow"],                           effectDur: 0.50, cutDur: 0.50, every: 1 },
+  // cutDur was 0.50 — identical to effectDur — so EVERY boundary became a
+  // half-second dissolve and the "quick cut-like fades so the beat still hits"
+  // fallback above never hit anything. At this style's ~2.4s slice a fifth of the
+  // reel was mid-dissolve: no attack anywhere, so cuts landed on real beats that
+  // nobody could hear. Every other style cuts in 0.05-0.06s. Cinematic stays the
+  // gentlest — occasional soft effects, no whip-slides — but it now CUTS between
+  // them. effectDur 0.40 also respects the ≤0.4s rule stated in styles.js.
+  cinematic: { effects: ["fade", "fadeblack", "dissolve", "fadeslow"],                           effectDur: 0.40, cutDur: 0.08, every: 3 },
 };
 const DEFAULT_TRANSITION = { effects: ["fade", "dissolve"], effectDur: 0.3, cutDur: 0.06, every: 2 };
 
