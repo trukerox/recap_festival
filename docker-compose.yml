@@ -118,18 +118,25 @@ services:
     # OFF; check with `docker info | grep -i "No memory limit"`. Enable by adding
     #   cgroup_enable=memory cgroup_memory=1
     # to the single line in /boot/firmware/cmdline.txt, then reboot.
-    # 3g -> 4g. Measured, not guessed: `cinematic` (cross-fades only) peaks at
-    # 1.3GB and finishes, while `clean` (zoomin/smoothright geometric transitions
-    # + a split-screen segment) blows past 3GB and gets cgroup-OOM-killed. The
-    # style drives peak memory, by at least 2.3x.
+    # Back to 3g after the real cause was found and fixed (video segments were
+    # being routed through zoompan; see the accent comment in videoComposer.js).
+    # It was briefly raised to 4g while I was still wrongly treating this as a
+    # headroom problem. Measured peaks since the fix:
     #
-    # 4g is what the box can honestly spare: 7.9GB total, ~2.6GB held by the other
-    # containers, leaving ~1.3GB for the kernel and page cache. It is NOT known to
-    # be enough — a killed render only tells you where the wall was, never how far
-    # the process wanted to go. If `clean` still dies here, the answer is to make
-    # the filter graph cheaper, not to keep buying headroom the Pi doesn't have.
-    mem_limit: 4g
-    memswap_limit: 4g
+    #   cinematic  13 inputs  1.30GB
+    #   clean      14 inputs  1.88GB
+    #   beatcut    19 inputs  1.75GB   <- heaviest graph, LOWER than clean
+    #
+    # Input count is not the driver, so 3g leaves ~60% headroom over the worst
+    # observed peak. 4g was actively harmful: 4g here plus ~2.6GB of other
+    # containers is 6.6 of the Pi's 7.9GB, leaving almost nothing for page cache —
+    # which is the exact condition that thrashed this box to a hard freeze. The
+    # cap exists to protect the host, so it must stay well under what the host has.
+    #
+    # memswap_limit == mem_limit still means ZERO swap: better one dead render than
+    # a swap-thrashing Pi that needs the power button.
+    mem_limit: 3g
+    memswap_limit: 3g
     cpus: "3.0"
     logging:
       driver: json-file
