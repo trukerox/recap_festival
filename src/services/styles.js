@@ -19,6 +19,15 @@
 //   * hero close-ups (food, faces) are held 2x+ as "moments"
 //   * the title is an event: big bold FESTIVAL RECAP + event/location, held ~3s
 //   * occasional split-screen (two clips stacked) adds playful geometry
+//
+// titleMainSize is an UPPER BOUND, not the size. videoComposer auto-fits the hook
+// to 90% of frame width and takes the smaller of the two, so a long hook shrinks
+// on its own. These caps only bite on SHORT hooks — without one, "FUN" would set
+// at ~600px. Raised ~1.3x on 2026-07-17: they were sized for DejaVu (advance ~0.70
+// of fontsize) and never moved when the hook became Anton (~0.54, condensed), so
+// the fitter kept calculating 112 and getting clamped back to 96. Anton is a
+// shouting face; it was talking. Safe for the DejaVu fallback too — a wider font
+// just hits the width budget first and the fitter clamps it there.
 
 export const STYLES = [
   {
@@ -38,7 +47,7 @@ export const STYLES = [
     splitMoments: 0, // uses the split3 structure instead of 2-up splits
     structure: { hook: true, split3: 2, bounceBack: true },
     musicGenre: "edm",
-    titleMainSize: 96,
+    titleMainSize: 128,
     titleSubSize: 44,
     panPx: 0, // shots dead still; handheld source motion is the texture
   },
@@ -51,7 +60,7 @@ export const STYLES = [
     heroHold: 1.8, // close-ups held ~2.2s while crowd shots stay snappy
     splitMoments: 1,
     musicGenre: "edm",
-    titleMainSize: 96,
+    titleMainSize: 128,
     titleSubSize: 44,
     panPx: 25, // near-still: the fast cuts ARE the motion
   },
@@ -64,7 +73,7 @@ export const STYLES = [
     heroHold: 1.6,
     splitMoments: 0, // no gimmicks — this style is about calm holds
     musicGenre: "cinematic",
-    titleMainSize: 84,
+    titleMainSize: 110,
     titleSubSize: 40,
     panPx: 70, // slow, barely-perceptible drift
   },
@@ -77,7 +86,7 @@ export const STYLES = [
     heroHold: 1.7,
     splitMoments: 2,
     musicGenre: "electronic",
-    titleMainSize: 90,
+    titleMainSize: 118,
     titleSubSize: 42,
     panPx: 90, // the most motion of any style — still gentle
   },
@@ -90,7 +99,7 @@ export const STYLES = [
     heroHold: 1.5,
     splitMoments: 1,
     musicGenre: "festival",
-    titleMainSize: 80,
+    titleMainSize: 104,
     titleSubSize: 40,
     panPx: 45,
   },
