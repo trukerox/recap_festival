@@ -182,6 +182,23 @@ export async function detectBeats(filePath) {
   }
 }
 
+// Tempo implied by the MEASURED beat gaps. Deliberately mirrors selection.js's
+// medianGap — the value its beatsFor() divides by — so a style judged against
+// this number is judged against exactly what the cutter will really do.
+//
+// Prefer this over a track's stored bpm at render time: the stored value is a
+// detection guess that can be hand-corrected in the Music tab (possibly after a
+// job was queued), while the beats are measured from the audio each render.
+// Needs a few beats before a median means anything.
+export function bpmFromBeats(beats) {
+  if (!Array.isArray(beats) || beats.length < 4) return null;
+  const gaps = [];
+  for (let i = 1; i < beats.length; i++) gaps.push(beats[i] - beats[i - 1]);
+  gaps.sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  return median > 0 ? 60 / median : null;
+}
+
 // Rough genre-typical tempo, NOT a measurement — used only as the fallback
 // when detectBpm() can't produce a value (e.g. a track too short to analyse).
 // Always presented as editable, never as fact.

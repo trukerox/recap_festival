@@ -133,9 +133,18 @@ const MAX_SLICE_DISTORTION = 0.2 + 1e-9;
 // and to a plain random pick when BPM is unknown.
 export function pickStyleForBpm(bpm) {
   if (!Number.isFinite(bpm) || bpm <= 0) return pickRandomStyle();
-  const fits = STYLES.filter((s) => sliceDistortion(s, bpm) <= MAX_SLICE_DISTORTION);
+  const fits = STYLES.filter((s) => styleFitsBpm(s, bpm));
   if (fits.length) return fits[Math.floor(Math.random() * fits.length)];
   return STYLES.reduce((best, s) => (sliceDistortion(s, bpm) < sliceDistortion(best, bpm) ? s : best));
+}
+
+// Would this style's pace still be recognisable at this tempo? Exported so the
+// render worker can re-judge a style that was chosen at QUEUE time (from the
+// track's stored bpm) against the tempo it actually MEASURED at render time.
+// An unknown tempo returns true: no measurement is no grounds to reject.
+export function styleFitsBpm(style, bpm) {
+  if (!Number.isFinite(bpm) || bpm <= 0) return true;
+  return sliceDistortion(style, bpm) <= MAX_SLICE_DISTORTION;
 }
 
 export function getStyle(name) {

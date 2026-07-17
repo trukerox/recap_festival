@@ -13,14 +13,14 @@ import { getScore, listScoresForProject, markSelection } from "../repositories/m
 import { claimNextQueuedJob, updateStatus, markProgress, markDone, markFailed } from "../repositories/renderJobs.js";
 import { getById as getMusicTrack } from "../repositories/musicTracks.js";
 import { unlink } from "node:fs/promises";
-import { detectBeats } from "../services/bpmDetect.js";
+import { detectBeats, bpmFromBeats } from "../services/bpmDetect.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
 import { extractFrame } from "../services/frameExtract.js";
 import { directEdit } from "../services/geminiDirector.js";
 import { notifyRenderDone, notifyRenderFailed } from "../services/notify.js";
 import { buildTimeline } from "../services/selection.js";
 import { composeVideo } from "../services/videoComposer.js";
-import { getStyle } from "../services/styles.js";
+import { getStyle, pickStyleForBpm, styleFitsBpm } from "../services/styles.js";
 
 // Gemini director: cull + order the shots (opener → build → closer) and get a
 // hook line. Best-effort — returns null (heuristic order) on any failure.
@@ -100,18 +100,50 @@ async function processJob(job) {
   const musicTrack = await getMusicTrack(job.music_track_id);
   if (!musicTrack) throw new Error(`Music track ${job.music_track_id} not found`);
 
-  const style = getStyle(job.style);
-
   // Detect the ACTUAL beat timestamps in the chosen track so cuts land on the
   // real kicks (not a fixed grid), plus per-beat energy and the DROP — the
   // musical payoff beat. Falls back to the BPM grid if aubio can't.
   const { beats, energies, drop } = await detectBeats(musicTrack.file_path);
 
+  // LAST-LINE GUARD on the style/tempo pairing. routes/projects.js already picks
+  // a style to suit the track, but it does so at QUEUE time from the track's
+  // STORED bpm — which by now may be wrong: it can be hand-corrected in the Music
+  // tab after the job queued, and jobs queued before tempo-aware picking existed
+  // carry whatever random style they were given. So re-judge against the tempo we
+  // just MEASURED, and swap if the style's pace wouldn't survive it. Without this
+  // a stale pairing renders silently: an EDM preset on a reggae track rounds its
+  // 1.2s slice down to a single beat and machine-guns through the whole recap.
+  let style = getStyle(job.style);
+  const measuredBpm = bpmFromBeats(beats) ?? musicTrack.bpm;
+  if (!styleFitsBpm(style, measuredBpm)) {
+    const replacement = pickStyleForBpm(measuredBpm);
+    if (replacement.name !== style.name) {
+      logger.warn(
+        { jobId: job.id, was: style.name, now: replacement.name, measuredBpm: Math.round(measuredBpm), storedBpm: musicTrack.bpm },
+        "style unsuited to measured tempo — swapped",
+      );
+      style = replacement;
+      // Persist it: the Videos tab and the Telegram ping both report job.style,
+      // and reporting a style the render didn't use is its own small lie. A failed
+      // write must not sink the render — the render is still correct either way.
+      await updateStatus(job.id, "selecting", { style: style.name }).catch((err) =>
+        logger.warn({ err: err.message, jobId: job.id }, "could not persist swapped style"),
+      );
+    }
+  }
+
   // Let Gemini direct WHICH shots and in WHAT ORDER (opener → build → closer);
   // beats still decide the cut timing. Null → heuristic order (no regression).
   const directorPlan = await runDirector(scoredRows);
   logger.info(
-    { jobId: job.id, style: style.name, beatsDetected: beats.length, drop, director: Boolean(directorPlan) },
+    {
+      jobId: job.id,
+      style: style.name,
+      measuredBpm: measuredBpm ? Math.round(measuredBpm) : null,
+      beatsDetected: beats.length,
+      drop,
+      director: Boolean(directorPlan),
+    },
     "render style",
   );
 
