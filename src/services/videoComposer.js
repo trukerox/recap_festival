@@ -499,8 +499,28 @@ export async function composeVideo({
   const lut = resolveLut(mood);
   const segments = comp.map((item, index) => {
     const inc = plan[index - 1];
-    const accent = index > 0 && inc && !SMOOTH_TRANSITIONS.has(inc.type)
-      && (item.kind === "photo" || item.kind === "video");
+    // PHOTOS ONLY — this is a MEMORY fix as much as a design one.
+    //
+    // `accent` routes a segment through zoompan (:307 keeps a cheap scale+crop
+    // path for video when there's no entrance move). Photos always zoompan anyway
+    // via blurredFit, so they're a constant across styles. The variable is VIDEO:
+    //
+    //   cinematic  all transitions smooth -> 0 video zoompans -> 1.3GB, finishes
+    //   punchy     flashy boundaries      -> 2 video zoompans -> 3.7GB, OOM-killed
+    //
+    // Two. That's the whole difference, and it costs ~2.4GB — because a `-loop 1`
+    // photo hands zoompan a single decoded still, while a real video stream makes
+    // it buffer actual frames. Photo zoompans are cheap; video zoompans are not.
+    //
+    // Nothing else moved the needle: halving ffmpeg threads barely changed RSS, and
+    // raising the cap never converges (3g died at 2.73GB, 4g died at 3.70GB — it
+    // grows to fill whatever it is given).
+    //
+    // Excluding video costs nothing visually: a clip already carries its own
+    // motion, and a zoom-punch on top of handheld footage reads as a wobble rather
+    // than an accent. It's why beatcut sets panPx: 0 and calls the source motion
+    // "the texture". Photos are static — they're the ones that need the move.
+    const accent = index > 0 && inc && !SMOOTH_TRANSITIONS.has(inc.type) && item.kind === "photo";
     return segmentFilter({
       item, index, width, height, grade: style.grade, panPx: style.panPx ?? 50,
       entrance: accent ? "punch" : "none",
