@@ -13,7 +13,7 @@ import { getScore, listScoresForProject, markSelection } from "../repositories/m
 import { claimNextQueuedJob, updateStatus, markProgress, markDone, markFailed } from "../repositories/renderJobs.js";
 import { getById as getMusicTrack } from "../repositories/musicTracks.js";
 import { unlink } from "node:fs/promises";
-import { detectBeats, bpmFromBeats } from "../services/bpmDetect.js";
+import { detectBeats, bpmFromBeats, alignMusicToDrop } from "../services/bpmDetect.js";
 import { analyzeMediaItem } from "../services/mediaAnalysis.js";
 import { extractFrame } from "../services/frameExtract.js";
 import { directEdit } from "../services/geminiDirector.js";
@@ -103,7 +103,18 @@ async function processJob(job) {
   // Detect the ACTUAL beat timestamps in the chosen track so cuts land on the
   // real kicks (not a fixed grid), plus per-beat energy and the DROP — the
   // musical payoff beat. Falls back to the BPM grid if aubio can't.
-  const { beats, energies, drop } = await detectBeats(musicTrack.file_path);
+  const detected = await detectBeats(musicTrack.file_path);
+
+  // Play the 30s of the track that CONTAIN the drop rather than the first 30s.
+  // Rebases beats/energies/drop with the trim — they're all measured from the
+  // track's t=0 and every cut lands ON a beat, so they move together or not at all.
+  const { musicStart, beats, energies, drop } = alignMusicToDrop({
+    beats: detected.beats,
+    energies: detected.energies,
+    drop: detected.drop,
+    trackDuration: Number(musicTrack.duration_seconds) || null,
+    renderDuration: config.render.durationSeconds,
+  });
 
   // LAST-LINE GUARD on the style/tempo pairing. routes/projects.js already picks
   // a style to suit the track, but it does so at QUEUE time from the track's
@@ -141,6 +152,9 @@ async function processJob(job) {
       style: style.name,
       measuredBpm: measuredBpm ? Math.round(measuredBpm) : null,
       beatsDetected: beats.length,
+      // musicStart > 0 means we skipped into the track to catch the drop; `drop` is
+      // then rebased into reel time, so it should sit ~65% through and actually fire.
+      musicStart: Number(musicStart.toFixed(2)),
       drop,
       director: Boolean(directorPlan),
     },
@@ -211,6 +225,7 @@ async function processJob(job) {
     mood: directorPlan?.mood ?? null,
     boundaryEnergies,
     drop,
+    musicStart,
     outputPath,
     onProgress: (p) => {
       // Estimate from output time processed (timemark "HH:MM:SS.xx"), which

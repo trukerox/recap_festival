@@ -458,6 +458,7 @@ export async function composeVideo({
   titleSubText,
   hook,
   mood = null,
+  musicStart = 0,
   boundaryEnergies = [],
   drop = null,
   outputPath,
@@ -683,8 +684,14 @@ export async function composeVideo({
   // plain music chain, unchanged.
   const AR = "aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo";
   const fadeOut = Math.min(2.5, totalDuration / 2);
+  // musicStart > 0 = skip into the track so the reel gets the stretch CONTAINING the
+  // drop, not the intro (see alignMusicToDrop). Same length, same volume — a
+  // different 30 seconds. asetpts rebases to 0 so everything downstream is reel time.
+  // The 0.4s fade-in matters more now: starting mid-song means starting mid-waveform,
+  // which clicks without it.
+  const ms = Number.isFinite(musicStart) && musicStart > 0 ? musicStart : 0;
   const musicChain =
-    `[${musicInputIndex}:a]atrim=0:${totalDuration.toFixed(3)},asetpts=PTS-STARTPTS,` +
+    `[${musicInputIndex}:a]atrim=${ms.toFixed(3)}:${(ms + totalDuration).toFixed(3)},asetpts=PTS-STARTPTS,` +
     `afade=t=in:st=0:d=0.4,afade=t=out:st=${(totalDuration - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}`;
 
   const audioFilters = [];

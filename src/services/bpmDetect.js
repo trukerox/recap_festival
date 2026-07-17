@@ -199,6 +199,59 @@ export function bpmFromBeats(beats) {
   return median > 0 ? 60 / median : null;
 }
 
+// Play the 30 seconds of the track that CONTAIN the drop, instead of the first 30.
+//
+// The drop is the song's payoff, and a lot hangs off it: the impact SFX, the riser
+// building into it, the strongest shot reserved for it, the cuts accelerating in,
+// and the hold afterwards. All of it worked and almost none of it ever ran —
+// observed firing on 1 render in 4. Real tracks drop at 45s-2min; a 30s reel played
+// the track from t=0, so `drop` fell outside the usable window and every one of
+// those features silently no-opped.
+//
+// This changes WHICH 30 seconds are used, not how much: same song, same length,
+// same volume — the chorus instead of the intro.
+//
+// beats/energies/drop are all measured from the track's t=0 and every cut is placed
+// ON a beat, so they must ALL rebase together with the trim. Rebasing the audio
+// without the beats would put every cut off the music — worse than the bug.
+export function alignMusicToDrop({
+  beats = [],
+  energies = [],
+  drop,
+  trackDuration,
+  renderDuration,
+  dropAtFraction = 0.65, // ~19.5s into a 30s reel: room to build, then breathe before the end card
+}) {
+  const unchanged = { musicStart: 0, beats, energies, drop };
+  if (!Number.isFinite(drop) || !Number.isFinite(renderDuration)) return unchanged;
+
+  let musicStart = drop - renderDuration * dropAtFraction;
+  if (musicStart <= 0) return unchanged; // already drops early enough — leave it alone
+
+  // Never trim so late that the reel runs off the end of the track into silence.
+  // Clamping can leave the drop later than we wanted, which is fine — late but
+  // present beats absent.
+  if (Number.isFinite(trackDuration) && trackDuration > renderDuration) {
+    musicStart = Math.min(musicStart, trackDuration - renderDuration);
+  }
+  if (musicStart <= 0) return unchanged;
+
+  const haveEnergies = energies.length === beats.length;
+  const rebasedBeats = [];
+  const rebasedEnergies = [];
+  for (let i = 0; i < beats.length; i++) {
+    const t = beats[i] - musicStart;
+    if (t < 0) continue; // beat is before the new start — it no longer exists in this reel
+    rebasedBeats.push(t);
+    if (haveEnergies) rebasedEnergies.push(energies[i]);
+  }
+  // Too few beats left to cut against (a drop very near the track's end). Better the
+  // old behaviour than a reel with nothing to land on.
+  if (rebasedBeats.length < 8) return unchanged;
+
+  return { musicStart, beats: rebasedBeats, energies: rebasedEnergies, drop: drop - musicStart };
+}
+
 // Rough genre-typical tempo, NOT a measurement — used only as the fallback
 // when detectBpm() can't produce a value (e.g. a track too short to analyse).
 // Always presented as editable, never as fact.
