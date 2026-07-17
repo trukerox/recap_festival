@@ -55,6 +55,11 @@ export const config = {
     durationSeconds: int(process.env.RENDER_DURATION_SECONDS, 20),
     queuePollMs: int(process.env.RENDER_QUEUE_POLL_MS, 3000),
     ffmpegPreset: process.env.FFMPEG_PRESET || "veryfast",
+    // Cap ffmpeg's parallelism. Unset, ffmpeg spawns threads per core AND per
+    // filter, and each carries frame buffers — with a 25-input graph on a
+    // 4-core Pi that over-parallelises into a memory balloon. 4 = the Pi 5's
+    // core count.
+    ffmpegThreads: int(process.env.FFMPEG_THREADS, 4),
   },
 
   retentionDays: int(process.env.RETENTION_DAYS, 14),

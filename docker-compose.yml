@@ -97,17 +97,24 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    deploy:
-      resources:
-        limits:
-          # FFmpeg encoding is CPU-bound — this needs real headroom, unlike a
-          # typical lightweight web service on this Pi. Tune `cpus` down if
-          # the Pi has fewer cores or other services are starved; a Pi 4/5
-          # quad-core box leaves 1 core free for Caddy/MariaDB/etc. at "3.0".
-          cpus: "3.0"
-          memory: 1536M
-        reservations:
-          memory: 256M
+    # ⚠ These MUST be `mem_limit`/`cpus` at service level, NOT `deploy.resources`.
+    # `deploy:` is SWARM-ONLY — `docker compose up` silently ignores it, so this
+    # container ran completely UNCAPPED (the old block claimed a 1536M limit that
+    # was never applied; compose even said "Limitation discarded"). An uncapped
+    # ffmpeg with a 25-input filter graph can exhaust an 8GB Pi and hard-freeze
+    # the whole box.
+    #
+    # memswap_limit == mem_limit gives the container ZERO swap. That's
+    # deliberate: swap thrash is what turns "a process wants too much memory"
+    # into "the entire Pi is unresponsive". Better the render dies alone.
+    #
+    # NB: needs the kernel cgroup memory controller. Raspberry Pi OS ships it
+    # OFF; check with `docker info | grep -i "No memory limit"`. Enable by adding
+    #   cgroup_enable=memory cgroup_memory=1
+    # to the single line in /boot/firmware/cmdline.txt, then reboot.
+    mem_limit: 3g
+    memswap_limit: 3g
+    cpus: "3.0"
     logging:
       driver: json-file
       options:

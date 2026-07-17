@@ -705,6 +705,13 @@ export async function composeVideo({
           "-c:a", "aac",
           "-b:a", "128k",
           "-movflags", "+faststart",
+          // Bound ffmpeg's parallelism: unset, it spawns threads per core AND
+          // per filter, each holding frame buffers — with ~25 inputs, blurred-fit
+          // and a deep xfade chain that over-parallelises into a memory balloon
+          // on a 4-core Pi. filter_complex_threads matters most here: the filter
+          // graph, not the encoder, is where our frames live.
+          "-threads", String(config.render.ffmpegThreads),
+          "-filter_complex_threads", String(config.render.ffmpegThreads),
           "-t", totalDuration.toFixed(3),
         ])
         .output(outputPath)
