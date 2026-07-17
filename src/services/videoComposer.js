@@ -16,12 +16,22 @@ import { generateEndCard } from "./endCard.js";
 import { getStyle } from "./styles.js";
 
 const FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-// The hook is set in Anton (bundled in fonts/, SIL OFL) — a heavy condensed
-// poster face; DejaVu is a system fallback font and reads bland as a title.
-// Sub-lines stay DejaVu Bold: classic display/text pairing. Falls back cleanly
-// if the image predates the font (deploy without --force-rebuild).
+// Type pairing. The hook is Anton (bundled, SIL OFL): a heavy condensed poster
+// face drawn for exactly this job. Sub-lines are Inter SemiBold (bundled, SIL
+// OFL): designed for screens, and its job is to be crisp and get OUT OF THE WAY.
+//
+// Why two families rather than one: Anton ships a SINGLE weight. There is no
+// Anton Medium to step down to, so it physically cannot express a two-tier
+// hierarchy alone — which is why the sub-lines used to fall back to DejaVu Sans
+// Bold, the Linux system font. That mismatch (deliberate display face + system
+// fallback) is the loudest "a script made this" tell there is, and it's what read
+// as "boring". DejaVu remains only as a last resort if a font file is absent
+// (e.g. an image built before it was added).
 const ANTON_FILE = join(process.cwd(), "fonts", "Anton-Regular.ttf");
 const HAVE_ANTON = existsSync(ANTON_FILE);
+const INTER_FILE = join(process.cwd(), "fonts", "Inter-SemiBold.ttf");
+const HAVE_INTER = existsSync(INTER_FILE);
+const SUB_FONT = HAVE_INTER ? INTER_FILE : FONT_FILE;
 const TITLE_SECONDS = 3.2;
 
 // Sound-effects kit (sfx/, baked into the image): whoosh under flashy
@@ -41,7 +51,11 @@ const MAX_WHOOSHES = 8;
 // luts/ dir to activate; a missing file simply means no grade for that mood.
 const MOOD_LUT_RULES = [
   { bucket: "warm", re: /warm|nostalg|golden|sunset|cosy|cozy|vintage|romantic/i },
-  { bucket: "vibrant", re: /vibrant|joy|happy|energe|festive|lively|fun|bright|party/i },
+  // `energ`, not `energe`: the latter matches "energetic" but NOT "energy", and
+  // Gemini returns "High-energy" routinely. It landed on vibrant.cube anyway via
+  // the fallback below, so nothing looked broken — but with warm/moody installed
+  // and no vibrant.cube it would silently grade nothing.
+  { bucket: "vibrant", re: /vibrant|joy|happy|energ|festive|lively|fun|bright|party/i },
   { bucket: "cool", re: /cool|sleek|modern|clean|crisp|blue|calm|serene/i },
   { bucket: "moody", re: /moody|dramatic|dark|intense|cinematic|epic|night/i },
 ];
@@ -521,8 +535,19 @@ export async function composeVideo({
   // buildTitleSub joins "event\nlocation" — split so each line gets its own
   // weight/colour (the event name carries the brand orange).
   const subLines = String(titleSubText || eventName || "").split("\n").map((s) => s.trim()).filter(Boolean);
-  const eventLine = subLines[0] || "";
+  let eventLine = subLines[0] || "";
   const locLine = subLines.slice(1).join(" · ");
+
+  // DEDUPE. The director writes a hook capped at 18 chars, and event names are
+  // short — so it lands on the event name constantly ("BREZELFEST FUN" over
+  // "Brezelfest"). Saying it twice burns the scroll-stop, which is the most
+  // valuable real estate in the whole video. If the hook already contains the
+  // event name, drop the event line and let location carry the second tier.
+  // Compared on letters and digits only, so punctuation/spacing can't defeat it.
+  const squash = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (eventLine && squash(mainText).includes(squash(eventLine)) && squash(eventLine).length >= 3) {
+    eventLine = "";
+  }
 
   // Auto-shrink so a long hook fits instead of running off both edges. CHAR_ADV
   // is the rough advance width per char for this font (uppercase), as a fraction
@@ -551,7 +576,7 @@ export async function composeVideo({
   // A heavier treatment than plain white + a hairline outline, which vanished
   // into busy festival shots: thick dark outline AND an offset drop shadow, so
   // the text reads over anything.
-  const drawText = ({ path, size, color, y, tIn, borderw, font = FONT_FILE }) =>
+  const drawText = ({ path, size, color, y, tIn, borderw, font = SUB_FONT }) =>
     `drawtext=textfile='${path}':fontfile='${font}':fontsize=${size}:fontcolor=${color}:` +
     `borderw=${borderw}:bordercolor=black@0.8:shadowcolor=black@0.55:shadowx=3:shadowy=3:` +
     `x=(w-text_w)/2:y='${slideY(y, tIn)}':alpha='${alphaExpr(tIn)}':${en}`;
@@ -584,8 +609,22 @@ export async function composeVideo({
     nextY = `h*0.09+${titleMainSize + 26 + eventSize + 8}`;
   }
   if (locLine) {
+    // With the event line deduped away, location is the ONLY supporting line, so
+    // promote it to the event tier — a lone whisper under a shout reads like
+    // something is missing. Stagger tightens too: there's no middle line to wait
+    // for. Left white rather than brand orange: #E07A1E disappears into daylight
+    // festival shots that are already orange and pink, and the end card carries
+    // the brand where the background is ours to control.
+    const solo = !eventLine;
     chainText(
-      drawText({ path: await textFile(locLine), size: locSize, color: "white@0.85", y: nextY, tIn: 0.32, borderw: 3 }),
+      drawText({
+        path: await textFile(locLine),
+        size: solo ? eventSize : locSize,
+        color: solo ? "white@0.9" : "white@0.85",
+        y: nextY,
+        tIn: solo ? 0.2 : 0.32,
+        borderw: 3,
+      }),
     );
   }
   // Always land on [vout] whatever got chained (null = free passthrough rename).
@@ -688,7 +727,7 @@ export async function composeVideo({
       segments: comp.map((it, i) => ({ i, kind: it.kind, dur: Number(it.duration.toFixed(2)) })),
       musicIndex: musicInputIndex,
       totalDuration: Number(totalDuration.toFixed(2)),
-      titleFont: HAVE_ANTON ? "anton" : "dejavu",
+      titleFont: `${HAVE_ANTON ? "anton" : "dejavu"}/${HAVE_INTER ? "inter" : "dejavu"}`,
       sfx: sfxLog,
       mood: mood || null,
       lut: lut.bucket,
