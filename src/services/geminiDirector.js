@@ -1,7 +1,13 @@
 // Phase 3: Gemini as DIRECTOR. One call over ALL the footage that returns a
-// culled, ordered edit plan (opener → build → closer) + a punchy hook line +
-// optional per-shot captions + a mood. Our engine still owns timing (cuts snap
-// to the music beat) and rendering; Gemini decides WHAT plays and IN WHAT ORDER.
+// culled, ordered edit plan (opener → build → closer) + a punchy hook line + a
+// mood. Our engine still owns timing (cuts snap to the music beat) and rendering;
+// Gemini decides WHAT plays and IN WHAT ORDER.
+//
+// Per-shot captions were REMOVED 2026-07-17 (user: "I dont want captions"). They
+// were asked for on every render, parsed, returned — and never drawn by the
+// composer, so we spent tokens and prompt budget on text nobody ever saw. If they
+// come back, the composer needs a drawtext layer FIRST; don't re-add the field and
+// leave it dangling again.
 //
 // Best-effort: with no key, too few shots, or any failure it returns null and
 // the caller falls back to the heuristic order — so this never blocks a render.
@@ -22,7 +28,6 @@ const DIRECTOR_SCHEMA = {
         properties: {
           index: { type: "integer" },
           role: { type: "string", enum: ["opener", "highlight", "closer"] },
-          caption: { type: "string" },
           // Enum-locked so the model can't request effects the renderer doesn't
           // have (an open field invites "3D page peel" / "glitch datamosh").
           effect: { type: "string", enum: ["none", "slowmo"] },
@@ -42,7 +47,7 @@ How THIS engine works, so plan within it:
 - The reel is cut to the music beat. You choose WHICH clips and their ORDER — not durations.
 - Cull hard: drop blurry, dull, badly-lit, repetitive or weak shots. Fewer strong shots beats more weak ones.
 - Order for retention: OPEN on the single most eye-catching shot (role "opener"); build energy through the middle (role "highlight"); END on a satisfying shot (role "closer").
-- For each selected clip give: its index, its role, and an OPTIONAL on-screen caption (max 4 words, punchy — omit when a shot needs none).
+- For each selected clip give: its index and its role.
 - "effect": VIDEO clips only. "slowmo" plays the moment at half speed for drama — reserve it for at most 2 genuinely strong MOTION moments (a jump, confetti, a crowd surge); everything else "none". Photos are always "none". Only "none" and "slowmo" exist — any other value crashes the renderer.
 - "hook": the bold on-screen opening line. 2-4 words, MAX 18 CHARACTERS — it's set huge, and a longer hook has to shrink to fit, which kills its impact. "BREZELFEST 2026" or "BEST NIGHT EVER", not "Festival Fun Unleashed!".
 - "mood": one or two words (e.g. "high-energy", "warm nostalgic").
@@ -50,8 +55,8 @@ How THIS engine works, so plan within it:
 Respond with JSON only. Use each clip index at most once. Select roughly ${Math.max(8, Math.round(seconds * 0.7))}-${n} clips.`;
 }
 
-// shots: [{ index, id, framePath, kind }]. Returns { hook, mood, order:[{id,role}],
-// captions:{id:text} } or null.
+// shots: [{ index, id, framePath, kind }]. Returns
+// { hook, mood, order:[{id,role}], effects:{id:"slowmo"} } or null.
 export async function directEdit(shots, { durationSeconds }) {
   if (!config.ai.geminiKey || shots.length < 3) return null;
 
@@ -90,14 +95,12 @@ export async function directEdit(shots, { durationSeconds }) {
 
   const seen = new Set();
   const order = [];
-  const captions = {};
   const effects = {};
   for (const s of plan.shots) {
     const shot = shots[s.index];
     if (!shot || seen.has(shot.id)) continue; // invalid or duplicate index
     seen.add(shot.id);
     order.push({ id: shot.id, role: s.role === "opener" || s.role === "closer" ? s.role : "highlight" });
-    if (typeof s.caption === "string" && s.caption.trim()) captions[shot.id] = s.caption.slice(0, 40).trim();
     // Belt-and-braces despite the schema enum: slowmo only, and only on videos.
     if (s.effect === "slowmo" && shot.kind === "video") effects[shot.id] = "slowmo";
   }
@@ -111,7 +114,6 @@ export async function directEdit(shots, { durationSeconds }) {
     hook: typeof plan.hook === "string" ? plan.hook.slice(0, 40).trim() : null,
     mood: typeof plan.mood === "string" ? plan.mood.slice(0, 40) : null,
     order,
-    captions,
     effects,
   };
 }
