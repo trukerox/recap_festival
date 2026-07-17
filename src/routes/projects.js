@@ -8,10 +8,10 @@ import { createProject, getProject, setWatermark, updateProject } from "../repos
 import { insertMediaItem, listByProject, countByProject } from "../repositories/mediaItems.js";
 import { deleteScoresForProject } from "../repositories/mediaScores.js";
 import { createJob } from "../repositories/renderJobs.js";
-import { pickForStyle } from "../repositories/musicTracks.js";
+import { pickForStyle, getById as getMusicTrack } from "../repositories/musicTracks.js";
 import { probeMedia } from "../services/mediaProbe.js";
 import { sha256File } from "../utils/checksum.js";
-import { pickRandomStyle } from "../services/styles.js";
+import { pickRandomStyle, pickStyleForBpm } from "../services/styles.js";
 
 export const projectsRouter = Router();
 
@@ -153,16 +153,25 @@ projectsRouter.post("/:id/render", async (req, res, next) => {
 
     const body = renderSchema.parse(req.body ?? {});
 
-    // Auto-pick a random edit style so each render looks different. When the
-    // project's music style is "auto", let the chosen style set the music vibe;
-    // otherwise honour the user's explicit music choice.
-    const style = pickRandomStyle();
-    const musicGenre = project.music_style && project.music_style !== "auto" ? project.music_style : style.musicGenre;
-    const musicTrackId =
-      body.musicTrackId ?? (await pickForStyle(musicGenre))?.id ?? (await pickForStyle("auto"))?.id ?? null;
-    if (!musicTrackId) throw httpError(503, "No music tracks available — add tracks to the library first");
+    // TRACK FIRST, then a style that fits the track's actual tempo.
+    //
+    // This used to pick the style at random UP FRONT and never revisit it, which
+    // was fine only for "auto" — there the style chose its own genre, so the pair
+    // always matched by construction. Naming an explicit genre broke that: you'd
+    // get, say, the EDM-tuned "beatcut" preset stapled onto a 75 BPM reggae track,
+    // and the edit fought the music. Keying the style off measured BPM fixes every
+    // genre at once, including ones with no preset of their own.
+    const explicitGenre = project.music_style && project.music_style !== "auto" ? project.music_style : null;
+    // "auto" keeps its old behaviour: a random style's vibe still seeds WHICH
+    // genre we look for — it just no longer decides the edit before we know the song.
+    const seedGenre = explicitGenre ?? pickRandomStyle().musicGenre;
+    const track = body.musicTrackId
+      ? await getMusicTrack(body.musicTrackId)
+      : ((await pickForStyle(seedGenre)) ?? (await pickForStyle("auto")));
+    if (!track) throw httpError(503, "No music tracks available — add tracks to the library first");
 
-    const job = await createJob({ projectId: project.id, musicTrackId, style: style.name });
+    const style = pickStyleForBpm(track.bpm);
+    const job = await createJob({ projectId: project.id, musicTrackId: track.id, style: style.name });
     res.status(202).json(job);
   } catch (err) {
     next(err.issues ? httpError(400, err.issues.map((i) => i.message).join("; ")) : err);

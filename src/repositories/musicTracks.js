@@ -11,6 +11,17 @@ export async function getById(id) {
   return queryOne("SELECT * FROM music_tracks WHERE id = ?", [id]);
 }
 
+// Distinct genres that actually have a PICKABLE track behind them, for the
+// project form's genre dropdown. Filtered to active = 1 on purpose: pickForStyle
+// only ever selects active tracks, so offering a genre whose tracks are all
+// deactivated would be offering a choice the renderer silently ignores.
+export async function listGenres() {
+  const rows = await query(
+    "SELECT DISTINCT genre FROM music_tracks WHERE active = 1 AND genre IS NOT NULL AND genre <> '' ORDER BY genre",
+  );
+  return rows.map((r) => r.genre);
+}
+
 export async function listAll() {
   return query("SELECT * FROM music_tracks ORDER BY created_at DESC");
 }

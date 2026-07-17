@@ -108,6 +108,36 @@ export function pickRandomStyle() {
   return STYLES[Math.floor(Math.random() * STYLES.length)];
 }
 
+// A style's targetSlice is in SECONDS, and every preset above was tuned against
+// ~128 BPM dance music. selection.js can only cut ON beats, so it rounds the
+// slice to the nearest whole beat (its beatsFor). At 128 BPM (0.47s/beat) that
+// rounding is nearly free; at reggae's ~75 BPM (0.8s/beat) "beatcut"'s 1.2s
+// micro-cuts round to 1.6s — a third slower, which is the whole identity of the
+// style gone. Measure that as a fraction of what the style asked for.
+export function sliceDistortion(style, bpm) {
+  const beat = 60 / bpm;
+  const beats = Math.max(1, Math.round(style.targetSlice / beat));
+  return Math.abs(beats * beat - style.targetSlice) / style.targetSlice;
+}
+
+// Epsilon because the comparison sits right on a float boundary: at 75 BPM
+// "cinematic" scores 0.20000000000000018, and without slack a style's fate is
+// decided by binary rounding noise rather than by pacing.
+const MAX_SLICE_DISTORTION = 0.2 + 1e-9;
+
+// Pick a style whose intended pace SURVIVES beat-rounding at this track's tempo.
+// Keyed on measured BPM rather than a genre name, so it works for genres nobody
+// wrote a preset for. At ~128 BPM every style qualifies (so "auto" behaves as it
+// always did); at ~75 BPM the two EDM hard-cut styles drop out and the slower,
+// smoother ones remain. Falls back to the least-distorted style if none pass,
+// and to a plain random pick when BPM is unknown.
+export function pickStyleForBpm(bpm) {
+  if (!Number.isFinite(bpm) || bpm <= 0) return pickRandomStyle();
+  const fits = STYLES.filter((s) => sliceDistortion(s, bpm) <= MAX_SLICE_DISTORTION);
+  if (fits.length) return fits[Math.floor(Math.random() * fits.length)];
+  return STYLES.reduce((best, s) => (sliceDistortion(s, bpm) < sliceDistortion(best, bpm) ? s : best));
+}
+
 export function getStyle(name) {
   return STYLES.find((s) => s.name === name) || STYLES[STYLES.length - 1];
 }

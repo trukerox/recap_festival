@@ -58,6 +58,12 @@ services:
       # PNG here, then deletes them. Keeping that churn off the disk avoids the
       # I/O bottleneck and the write wear. server.js mkdir -p's this on startup.
       TMP_DIR: /dev/shm/festival_recap
+      # Was 4 (the Pi 5's core count). Dropped to 2 after the cgroup OOM killer
+      # took ffmpeg at 2.7GB anon-rss against the 3g cap (total-vm 6.3GB) on a
+      # 25-input graph. Threads multiply the in-flight frame buffers per filter,
+      # so halving them roughly halves filter memory. Slower, but it fits — and
+      # the headroom is what keeps a render from taking the whole Pi down.
+      FFMPEG_THREADS: 2
     # Docker's default /dev/shm is only 64MB — too small for a whole-track WAV
     # plus frames, and renders would fail. Peak use is ~20-30MB; 512m is ample
     # headroom and it's RAM the Pi 5 (8GB) can spare.

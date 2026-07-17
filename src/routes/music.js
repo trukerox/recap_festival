@@ -4,7 +4,7 @@ import { basename, resolve } from "node:path";
 import { unlink } from "node:fs/promises";
 import { httpError } from "../middleware/errorHandler.js";
 import { musicUpload } from "../middleware/upload.js";
-import { listActive, listAll, getById, upsertTrack, setActive, updateFields, deleteById } from "../repositories/musicTracks.js";
+import { listActive, listAll, listGenres, getById, upsertTrack, setActive, updateFields, deleteById } from "../repositories/musicTracks.js";
 import { detectBpm, genreDefaultBpm } from "../services/bpmDetect.js";
 import { probeAudioDuration } from "../services/mediaProbe.js";
 
@@ -21,6 +21,16 @@ musicRouter.get("/", async (req, res, next) => {
 musicRouter.get("/all", async (_req, res, next) => {
   try {
     res.json(await listAll());
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Genres the project form may offer. Must stay ABOVE the "/:id" routes below,
+// or Express matches "genres" as an id.
+musicRouter.get("/genres", async (_req, res, next) => {
+  try {
+    res.json(await listGenres());
   } catch (err) {
     next(err);
   }

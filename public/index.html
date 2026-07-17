@@ -83,8 +83,10 @@
       <label>Event name *<input id="eventName" required></label>
       <label>Location<input id="location"></label>
       <label>Date<input id="eventDate" type="date"></label>
-      <label>Music style (type a genre you have in the library — e.g. reggae — or "auto")
-        <input id="musicStyle" list="genreSuggestions" value="auto" placeholder="auto (recommended)">
+      <label>Music genre (only genres you have tracks for)
+        <select id="musicStyle">
+          <option value="auto">auto (recommended)</option>
+        </select>
       </label>
       <button id="createProjectBtn">Create project</button>
     </fieldset>
@@ -225,7 +227,7 @@ async function restoreProject() {
   const mediaCount = Array.isArray(proj.media) ? proj.media.length : 0;
   $('eventName').value = proj.event_name || '';
   $('location').value = proj.location || '';
-  if (proj.music_style) $('musicStyle').value = proj.music_style;
+  if (proj.music_style) setMusicGenre(proj.music_style);
   $('reuseText').textContent =
     `Reusing “${proj.event_name}” — ${mediaCount} photo/clip${mediaCount === 1 ? '' : 's'} already uploaded.` +
     (mediaCount >= 3 ? ' Just hit re-render — no need to upload again.' : ' Add a few more, then render.');
@@ -273,8 +275,9 @@ fetch('/api/config').then((r) => r.json()).then((c) => {
   if (c && c.renderDurationSeconds) $('renderBtn').textContent = `Generate ${c.renderDurationSeconds}s recap video`;
 }).catch(() => {});
 
-// Add the genres actually present in the library to the suggestion datalist,
-// so the music-style field suggests genres you have tracks for.
+// Add the genres actually present in the library to the suggestion datalist.
+// This still feeds the UPLOAD and GRAB forms, where free text is correct — you're
+// tagging a new track, so its genre may not exist in the library yet.
 function refreshGenreSuggestions() {
   fetch('/api/music/all').then((r) => r.json()).then((tracks) => {
     if (!Array.isArray(tracks)) return;
@@ -285,8 +288,47 @@ function refreshGenreSuggestions() {
     }
   }).catch(() => {});
 }
+
+// The project's genre picker offers ONLY genres with a pickable track behind them.
+// It used to be free text over a hardcoded datalist, so you could ask for "hip-hop"
+// with zero hip-hop tracks — pickForStyle then fell back to another genre and the
+// render quietly ignored the choice.
+// Rebuilds rather than appends, so re-running it after a library change can't
+// duplicate options. Keeps whatever was selected.
+function loadGenreOptions() {
+  return fetch('/api/music/genres').then((r) => r.json()).then((genres) => {
+    if (!Array.isArray(genres)) return;
+    const sel = $('musicStyle');
+    const prev = sel.value;
+    sel.length = 1; // keep the "auto" option, drop the rest
+    for (const g of genres) {
+      const o = document.createElement('option');
+      o.value = g;
+      o.textContent = g;
+      sel.appendChild(o);
+    }
+    if (prev) setMusicGenre(prev);
+  }).catch(() => {});
+}
+
+// A saved project can name a genre whose tracks have since been deleted or
+// deactivated. Show it (flagged) instead of letting the <select> silently snap
+// back to "auto" — a quiet reset would look like the app forgot the setting.
+function setMusicGenre(value) {
+  const sel = $('musicStyle');
+  if (![...sel.options].some((o) => o.value === value)) {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = `${value} (no tracks — will fall back)`;
+    sel.appendChild(o);
+  }
+  sel.value = value;
+}
+
 refreshGenreSuggestions();
-restoreProject();
+// Options must exist before restoreProject() sets one, or the assignment is a
+// silent no-op on a <select>.
+loadGenreOptions().then(restoreProject);
 
 function switchTab(name) {
   $('tab-recap').classList.toggle('hidden', name !== 'recap');
@@ -552,6 +594,9 @@ function handleGrabResult(result) {
 $('refreshMusicBtn').addEventListener('click', loadMusicLibrary);
 
 async function loadMusicLibrary() {
+  // Adding, deleting, deactivating or re-tagging a track can change which genres
+  // are offerable — this runs on every one of those, so the picker stays truthful.
+  loadGenreOptions();
   const res = await fetch('/api/music/all');
   const tracks = await res.json();
   const tbody = document.querySelector('#musicTable tbody');
